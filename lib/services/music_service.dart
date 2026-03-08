@@ -82,7 +82,7 @@ class MusicService {
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
-          data is List ? data : (data['songs'] ?? data['trending'] ?? []);
+          data is List ? data : (data['songs'] ?? data['trending'] ?? data['results'] ?? []);
       return items.map((e) => Song.fromJson(e as Map<String, dynamic>)).toList();
     }
     return [];
@@ -106,7 +106,9 @@ class MusicService {
   Future<List<Song>> getLikedSongs() async {
     final result = await _api.get('/library/liked');
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
+      final data = result['data'];
+      final List<dynamic> items =
+          (data is Map ? data['songs'] : data) as List<dynamic>? ?? [];
       return items.map((e) => Song.fromJson(e as Map<String, dynamic>)).toList();
     }
     return [];
@@ -117,7 +119,7 @@ class MusicService {
       Map<String, dynamic> metadata, int listenedSeconds, int totalDuration) async {
     return _api.post('/listen/track', {
       'song_id': songId,
-      'metadata': metadata,
+      'song_metadata': metadata,
       'listened_seconds': listenedSeconds,
       'total_duration': totalDuration,
     });
@@ -126,7 +128,9 @@ class MusicService {
   Future<List<Song>> getRecentHistory() async {
     final result = await _api.get('/history/recent');
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
+      final data = result['data'];
+      final List<dynamic> items =
+          (data is Map ? data['songs'] : data) as List<dynamic>? ?? [];
       return items.map((e) {
         final song = e['song'] ?? e;
         return Song.fromJson(song as Map<String, dynamic>);
