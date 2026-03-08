@@ -62,7 +62,18 @@ def not_found(e):
 
 @app.errorhandler(500)
 def internal_error(e):
-    return jsonify({"success": False, "message": "Internal server error"}), 500
+    import traceback
+    traceback.print_exc()
+    message = f"Internal server error: {str(e)}" if app.debug else "Internal server error"
+    return jsonify({"success": False, "message": message}), 500
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    traceback.print_exc()
+    message = f"Unexpected error: {str(e)}" if app.debug else "Unexpected error; try again later"
+    return jsonify({"success": False, "message": message}), 500
 
 
 if __name__ == "__main__":

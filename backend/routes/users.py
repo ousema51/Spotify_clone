@@ -34,6 +34,9 @@ def update_profile():
     user = db.users.find_one({"_id": ObjectId(g.current_user["_id"])})
     user["_id"] = str(user["_id"])
     user.pop("password_hash", None)
+    for key, value in user.items():
+        if isinstance(value, datetime):
+            user[key] = value.isoformat()
 
     return jsonify({"success": True, "data": user}), 200
 
@@ -52,6 +55,9 @@ def search_users():
     results = []
     for user in cursor:
         user["_id"] = str(user["_id"])
+        for key, value in user.items():
+            if isinstance(value, datetime):
+                user[key] = value.isoformat()
         results.append(user)
 
     return jsonify({"success": True, "data": results}), 200

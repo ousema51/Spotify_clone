@@ -27,6 +27,9 @@ def _user_to_dict(user):
     user = dict(user)
     user["_id"] = str(user["_id"])
     user.pop("password_hash", None)
+    for key, value in user.items():
+        if isinstance(value, datetime):
+            user[key] = value.isoformat()
     return user
 
 
