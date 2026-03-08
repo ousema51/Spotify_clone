@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -41,16 +42,33 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
 
+      debugPrint('[AUTH] Submit success: ${result['success']}');
+
       if (!mounted) return;
 
       if (result['success'] == true) {
-        Navigator.pushReplacementNamed(context, '/main');
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+          (route) => false,
+        );
       } else {
         final message = result['message'] ?? 'Something went wrong';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message.toString()),
             backgroundColor: Colors.red[700],
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[AUTH] Submit error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('An unexpected error occurred. Please try again.'),
+            backgroundColor: Colors.red[700],
+            duration: const Duration(seconds: 4),
           ),
         );
       }
