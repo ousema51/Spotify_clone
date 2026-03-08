@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from functools import wraps
 
 import jwt
@@ -37,9 +38,13 @@ def token_required(f):
         if not user:
             return jsonify({"success": False, "message": "User not found"}), 401
 
-        user["_id"] = str(user["_id"])
-        user.pop("password_hash", None)
-        g.current_user = user
+        user_dict = dict(user)
+        user_dict["_id"] = str(user_dict["_id"])
+        user_dict.pop("password_hash", None)
+        for key, value in user_dict.items():
+            if isinstance(value, datetime):
+                user_dict[key] = value.isoformat()
+        g.current_user = user_dict
         g.token = token
         return f(*args, **kwargs)
 
