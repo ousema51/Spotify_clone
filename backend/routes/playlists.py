@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import jwt as _jwt
 from bson import ObjectId
@@ -47,7 +47,7 @@ def create_playlist():
     if not name:
         return jsonify({"success": False, "message": "Playlist name is required"}), 400
 
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     doc = {
         "owner_id": g.current_user["_id"],
         "name": name,
@@ -106,7 +106,7 @@ def update_playlist(playlist_id):
         updates["description"] = data["description"]
     if "is_public" in data:
         updates["is_public"] = bool(data["is_public"])
-    updates["updated_at"] = datetime.utcnow()
+    updates["updated_at"] = datetime.now(tz=timezone.utc)
 
     db.playlists.update_one({"_id": pl["_id"]}, {"$set": updates})
     updated = db.playlists.find_one({"_id": pl["_id"]})
@@ -153,11 +153,11 @@ def add_song(playlist_id):
         "artist": data.get("artist"),
         "cover_url": data.get("cover_url"),
         "duration": data.get("duration"),
-        "added_at": datetime.utcnow().isoformat(),
+        "added_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     db.playlists.update_one(
         {"_id": pl["_id"]},
-        {"$push": {"songs": song_entry}, "$set": {"updated_at": datetime.utcnow()}},
+        {"$push": {"songs": song_entry}, "$set": {"updated_at": datetime.now(tz=timezone.utc)}},
     )
     return jsonify({"success": True, "message": "Song added to playlist"}), 201
 
@@ -173,7 +173,7 @@ def remove_song(playlist_id, song_id):
 
     db.playlists.update_one(
         {"_id": pl["_id"]},
-        {"$pull": {"songs": {"song_id": song_id}}, "$set": {"updated_at": datetime.utcnow()}},
+        {"$pull": {"songs": {"song_id": song_id}}, "$set": {"updated_at": datetime.now(tz=timezone.utc)}},
     )
     return jsonify({"success": True, "message": "Song removed from playlist"}), 200
 
@@ -193,7 +193,7 @@ def follow_playlist(playlist_id):
     if db.playlist_follows.find_one({"user_id": user_id, "playlist_id": playlist_id}):
         return jsonify({"success": False, "message": "Already following this playlist"}), 400
 
-    db.playlist_follows.insert_one({"user_id": user_id, "playlist_id": playlist_id, "followed_at": datetime.utcnow()})
+    db.playlist_follows.insert_one({"user_id": user_id, "playlist_id": playlist_id, "followed_at": datetime.now(tz=timezone.utc)})
     return jsonify({"success": True, "message": "Playlist followed"}), 201
 
 

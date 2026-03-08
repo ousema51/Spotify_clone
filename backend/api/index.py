@@ -35,6 +35,26 @@ except Exception as exc:
     print(f"[WARNING] Could not connect to MongoDB at startup: {exc}", flush=True)
 
 
+@app.before_request
+def ensure_db():
+    """Ensure MongoDB is connected before processing any request."""
+    try:
+        db._ensure_initialized()
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"Database connection error: {str(exc)}"}), 503
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    try:
+        db._ensure_initialized()
+        # Quick ping to verify DB connection
+        db.get_db().command("ping")
+        return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
+    except Exception as exc:
+        return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+
+
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"success": False, "message": "Resource not found"}), 404

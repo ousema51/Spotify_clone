@@ -46,7 +46,7 @@ def register():
         return jsonify({"success": False, "message": "Username already taken"}), 400
 
     password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     result = db.users.insert_one(
         {
             "username": username,
@@ -82,7 +82,7 @@ def login():
     if not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
         return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     db.users.update_one({"_id": user["_id"]}, {"$set": {"last_login": now}})
 
     token = _make_token(user["_id"], username)

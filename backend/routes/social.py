@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -46,7 +46,7 @@ def follow_user(user_id):
     if db.followers.find_one({"follower_id": me, "following_id": user_id}):
         return jsonify({"success": False, "message": "Already following this user"}), 400
 
-    db.followers.insert_one({"follower_id": me, "following_id": user_id, "followed_at": datetime.utcnow()})
+    db.followers.insert_one({"follower_id": me, "following_id": user_id, "followed_at": datetime.now(tz=timezone.utc)})
     return jsonify({"success": True, "message": "User followed"}), 201
 
 

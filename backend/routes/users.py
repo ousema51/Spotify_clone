@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request
 
@@ -26,7 +26,7 @@ def update_profile():
     if not updates:
         return jsonify({"success": False, "message": "No fields to update"}), 400
 
-    updates["updated_at"] = datetime.utcnow()
+    updates["updated_at"] = datetime.now(tz=timezone.utc)
 
     from bson import ObjectId
 

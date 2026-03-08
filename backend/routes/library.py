@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from bson import ObjectId
 from flask import Blueprint, g, jsonify, request
@@ -49,7 +49,7 @@ def like_song(song_id):
         "artist": data.get("artist"),
         "cover_url": data.get("cover_url"),
         "duration": data.get("duration"),
-        "liked_at": datetime.utcnow(),
+        "liked_at": datetime.now(tz=timezone.utc),
     }
     db.liked_songs.insert_one(doc)
     return jsonify({"success": True, "message": "Song liked successfully"}), 201

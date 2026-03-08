@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request
 
@@ -31,7 +31,7 @@ def track_listen():
     completed = total_duration > 0 and listened_seconds >= total_duration * 0.8
 
     user_id = g.current_user["_id"]
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
 
     existing = db.listening_history.find_one({"user_id": user_id, "song_id": song_id})
     if existing:
