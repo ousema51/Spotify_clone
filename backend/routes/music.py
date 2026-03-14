@@ -15,14 +15,7 @@ def search():
     if not query:
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
-    if search_type == "songs":
-        result = jiosaavn.search_songs(query, page=page, limit=limit)
-    elif search_type == "albums":
-        result = jiosaavn.search_albums(query, page=page, limit=limit)
-    elif search_type == "artists":
-        result = jiosaavn.search_artists(query, page=page, limit=limit)
-    else:
-        result = jiosaavn.search_all(query)
+    result = jiosaavn.search_all(query)
 
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502

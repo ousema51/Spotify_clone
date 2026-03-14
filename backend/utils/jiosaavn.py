@@ -2,7 +2,7 @@ import os
 
 import requests
 
-JIOSAAVN_BASE = os.environ.get("JIOSAAVN_API_BASE", "https://saavn.dev/api")
+JIOSAAVN_BASE = os.environ.get("JIOSAAVN_API_BASE", "https://saavn.sumit.co/api")
 
 
 def _get(path, params=None):
@@ -22,8 +22,8 @@ def _get(path, params=None):
         return {"success": False, "message": "Invalid JSON response from JioSaavn API"}
 
 
-def search_songs(query, page=1, limit=20):
-    return _get("/search/songs", {"query": query, "page": page, "limit": limit})
+def search_songs(query):
+    return _get("/search", {"query": query})
 
 
 def search_albums(query, page=1, limit=20):
