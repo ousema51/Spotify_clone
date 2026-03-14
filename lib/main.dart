@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'services/auth_service.dart';
+import 'screens/auth/login_screen.dart';
 import 'screens/main_screen.dart';
 
 void main() {
@@ -27,9 +29,42 @@ class MyApp extends StatelessWidget {
       ),
       debugShowCheckedModeBanner: false,
       routes: {
+        '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainScreen(),
       },
-      home: const MainScreen(),
+      home: const _AppEntry(),
+    );
+  }
+}
+
+class _AppEntry extends StatefulWidget {
+  const _AppEntry();
+
+  @override
+  State<_AppEntry> createState() => _AppEntryState();
+}
+
+class _AppEntryState extends State<_AppEntry> {
+  final AuthService _authService = AuthService();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _authService.isLoggedIn(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF121212),
+            body: Center(
+              child: CircularProgressIndicator(color: Color(0xFF1DB954)),
+            ),
+          );
+        }
+        if (snapshot.data == true) {
+          return const MainScreen();
+        }
+        return const LoginScreen();
+      },
     );
   }
 }

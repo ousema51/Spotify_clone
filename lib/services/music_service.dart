@@ -13,7 +13,7 @@ class MusicService {
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
     final result =
-        await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs', requiresAuth: false);
+        await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs');
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -25,7 +25,7 @@ class MusicService {
 
   Future<List<Album>> searchAlbums(String query) async {
     final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=albums', requiresAuth: false);
+        .get('/music/search?q=${Uri.encodeComponent(query)}&type=albums');
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -39,7 +39,7 @@ class MusicService {
 
   Future<List<Artist>> searchArtists(String query) async {
     final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=artists', requiresAuth: false);
+        .get('/music/search?q=${Uri.encodeComponent(query)}&type=artists');
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -53,7 +53,7 @@ class MusicService {
 
   // --- Individual fetch ---
   Future<Song?> getSong(String songId) async {
-    final result = await _api.get('/music/song/$songId', requiresAuth: false);
+    final result = await _api.get('/music/song/$songId');
     if (result['success'] == true && result['data'] != null) {
       return Song.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -61,7 +61,7 @@ class MusicService {
   }
 
   Future<Album?> getAlbum(String albumId) async {
-    final result = await _api.get('/music/album/$albumId', requiresAuth: false);
+    final result = await _api.get('/music/album/$albumId');
     if (result['success'] == true && result['data'] != null) {
       return Album.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -69,7 +69,7 @@ class MusicService {
   }
 
   Future<Artist?> getArtist(String artistId) async {
-    final result = await _api.get('/music/artist/$artistId', requiresAuth: false);
+    final result = await _api.get('/music/artist/$artistId');
     if (result['success'] == true && result['data'] != null) {
       return Artist.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -78,11 +78,11 @@ class MusicService {
 
   // --- Trending / Home ---
   Future<List<Song>> getTrending() async {
-    final result = await _api.get('/music/trending', requiresAuth: false);
+    final result = await _api.get('/music/trending');
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
-          data is List ? data : (data['songs'] ?? data['trending'] ?? data['results'] ?? []);
+          data is List ? data : (data['songs'] ?? data['trending'] ?? []);
       return items.map((e) => Song.fromJson(e as Map<String, dynamic>)).toList();
     }
     return [];
@@ -106,9 +106,7 @@ class MusicService {
   Future<List<Song>> getLikedSongs() async {
     final result = await _api.get('/library/liked');
     if (result['success'] == true && result['data'] != null) {
-      final data = result['data'];
-      final List<dynamic> items =
-          (data is Map ? data['songs'] : data) as List<dynamic>? ?? [];
+      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
       return items.map((e) => Song.fromJson(e as Map<String, dynamic>)).toList();
     }
     return [];
@@ -119,7 +117,7 @@ class MusicService {
       Map<String, dynamic> metadata, int listenedSeconds, int totalDuration) async {
     return _api.post('/listen/track', {
       'song_id': songId,
-      'song_metadata': metadata,
+      'metadata': metadata,
       'listened_seconds': listenedSeconds,
       'total_duration': totalDuration,
     });
@@ -128,9 +126,7 @@ class MusicService {
   Future<List<Song>> getRecentHistory() async {
     final result = await _api.get('/history/recent');
     if (result['success'] == true && result['data'] != null) {
-      final data = result['data'];
-      final List<dynamic> items =
-          (data is Map ? data['songs'] : data) as List<dynamic>? ?? [];
+      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
       return items.map((e) {
         final song = e['song'] ?? e;
         return Song.fromJson(song as Map<String, dynamic>);

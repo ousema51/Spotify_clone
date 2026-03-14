@@ -34,13 +34,7 @@ class Album {
       final first = rawArtist.first;
       artist = (first is Map ? first['name'] : first)?.toString();
     } else if (rawArtist is Map) {
-      final primary = rawArtist['primary'];
-      if (primary is List && primary.isNotEmpty) {
-        final first = primary.first;
-        artist = (first is Map ? first['name'] : first)?.toString();
-      } else {
-        artist = rawArtist['name']?.toString();
-      }
+      artist = rawArtist['name']?.toString();
     }
 
     String? coverUrl;
@@ -62,14 +56,10 @@ class Album {
       title: (json['name'] ?? json['title'] ?? 'Unknown').toString(),
       artist: artist,
       coverUrl: coverUrl,
-      songCount: _parseSongCount(json['songCount'] ?? json['song_count']) ?? songs?.length,
+      songCount: json['song_count'] is int
+          ? json['song_count'] as int
+          : songs?.length,
       songs: songs,
     );
-  }
-
-  static int? _parseSongCount(dynamic value) {
-    if (value is int) return value;
-    if (value is String) return int.tryParse(value);
-    return null;
   }
 }

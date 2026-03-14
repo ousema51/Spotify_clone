@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
@@ -40,7 +39,6 @@ class AuthService {
       {'username': username, 'password': password},
       requiresAuth: false,
     );
-    debugPrint('[AUTH] Register success: ${result['success']}');
     if (result['success'] == true && result['data'] != null) {
       final token = result['data']['token'] as String?;
       if (token != null) {
@@ -56,7 +54,6 @@ class AuthService {
       {'username': username, 'password': password},
       requiresAuth: false,
     );
-    debugPrint('[AUTH] Login success: ${result['success']}');
     if (result['success'] == true && result['data'] != null) {
       final token = result['data']['token'] as String?;
       if (token != null) {

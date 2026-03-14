@@ -79,11 +79,7 @@ def get_user_playlists(user_id):
     cursor = db.playlists.find({"owner_id": user_id, "is_public": True}).sort("created_at", -1)
     result = []
     for pl in cursor:
-        pl = dict(pl)
         pl["_id"] = str(pl["_id"])
-        for key, value in pl.items():
-            if isinstance(value, datetime):
-                pl[key] = value.isoformat()
         result.append(pl)
     return jsonify({"success": True, "data": result}), 200
 

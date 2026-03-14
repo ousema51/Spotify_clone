@@ -15,9 +15,6 @@ playlists_bp = Blueprint("playlists", __name__)
 def _pl_to_dict(pl):
     pl = dict(pl)
     pl["_id"] = str(pl["_id"])
-    for key, value in pl.items():
-        if isinstance(value, datetime):
-            pl[key] = value.isoformat()
     return pl
 
 
@@ -61,8 +58,8 @@ def create_playlist():
         "updated_at": now,
     }
     result = db.playlists.insert_one(doc)
-    doc["_id"] = result.inserted_id
-    return jsonify({"success": True, "data": _pl_to_dict(doc)}), 201
+    doc["_id"] = str(result.inserted_id)
+    return jsonify({"success": True, "data": doc}), 201
 
 
 # ── Single playlist ──────────────────────────────────────────────────────────

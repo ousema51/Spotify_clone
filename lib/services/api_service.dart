@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
@@ -32,15 +31,11 @@ class ApiService {
       {bool requiresAuth = true}) async {
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint('[API] GET $uri');
-      final response = await http
-          .get(uri, headers: await _headers(requiresAuth: requiresAuth))
-          .timeout(const Duration(seconds: 15));
-      debugPrint('[API] GET ${response.statusCode} $uri');
+      final response = await http.get(uri,
+          headers: await _headers(requiresAuth: requiresAuth));
       return _handleResponse(response);
     } catch (e) {
-      debugPrint('[API] GET error: $e');
-      return {'success': false, 'message': 'Network error: ${e.toString()}'};
+      return {'success': false, 'message': e.toString()};
     }
   }
 
@@ -48,17 +43,12 @@ class ApiService {
       {bool requiresAuth = true}) async {
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint('[API] POST $uri');
-      final response = await http
-          .post(uri,
-              headers: await _headers(requiresAuth: requiresAuth),
-              body: jsonEncode(body))
-          .timeout(const Duration(seconds: 15));
-      debugPrint('[API] POST ${response.statusCode} $uri');
+      final response = await http.post(uri,
+          headers: await _headers(requiresAuth: requiresAuth),
+          body: jsonEncode(body));
       return _handleResponse(response);
     } catch (e) {
-      debugPrint('[API] POST error: $e');
-      return {'success': false, 'message': 'Network error: ${e.toString()}'};
+      return {'success': false, 'message': e.toString()};
     }
   }
 
@@ -95,14 +85,12 @@ class ApiService {
       }
       return {
         'success': false,
-        'message': data['message'] ??
-            'Request failed with status ${response.statusCode}',
+        'message': data['message'] ?? 'Request failed',
       };
     } catch (_) {
       return {
         'success': false,
-        'message':
-            'Invalid server response (status ${response.statusCode}). The server may be starting up, please try again.',
+        'message': 'Invalid server response (status ${response.statusCode})',
       };
     }
   }
