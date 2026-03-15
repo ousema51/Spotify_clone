@@ -50,12 +50,15 @@ def ensure_db():
 def health():
     try:
         db._ensure_initialized()
-        # Quick ping to verify DB connection
         db.get_db().command("ping")
         return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
     except Exception as exc:
-        return jsonify(health_check())
-        #return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+        return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+
+@app.route("/api/music/health", methods=["GET"])
+def music_health():
+    from api.services.music import health_check
+    return jsonify(health_check())
 
 
 @app.errorhandler(404)
