@@ -1,13 +1,36 @@
-from ytmusicapi import YTMusic
-import yt_dlp
+try:
+    from ytmusicapi import YTMusic
+    _YT_AVAILABLE = True
+except Exception as _e:
+    print(f"[youtube_music] ytmusicapi not available: {_e}", flush=True)
+    YTMusic = None
+    _YT_AVAILABLE = False
 
-ytmusic = YTMusic()
+try:
+    import yt_dlp
+    _YTDLP_AVAILABLE = True
+except Exception as _e:
+    print(f"[youtube_music] yt_dlp not available: {_e}", flush=True)
+    yt_dlp = None
+    _YTDLP_AVAILABLE = False
+
+ytmusic = None
+if _YT_AVAILABLE:
+    try:
+        ytmusic = YTMusic()
+    except Exception as _e:
+        print(f"[youtube_music] YTMusic() init failed: {_e}", flush=True)
+        ytmusic = None
+        _YT_AVAILABLE = False
 
 
 def search_songs(query, page=1, limit=20):
     try:
         # ytmusic.search returns a list of results; use page/limit to slice
-        results = ytmusic.search(query, filter="songs") or []
+        if ytmusic:
+            results = ytmusic.search(query, filter="songs") or []
+        else:
+            results = []
         start = max(0, (page - 1) * limit)
         end = start + limit
 
@@ -22,7 +45,7 @@ def search_songs(query, page=1, limit=20):
             })
 
         # If ytmusic returned no results, try a lightweight fallback using yt_dlp
-        if not songs:
+        if not songs and _YTDLP_AVAILABLE and yt_dlp is not None:
             try:
                 query_str = f"ytsearch{limit}:{query}"
                 ydl_opts = {"quiet": True, "skip_download": True}
@@ -38,7 +61,8 @@ def search_songs(query, page=1, limit=20):
                         "duration": e.get("duration"),
                         "thumbnail": e.get("thumbnail")
                     })
-            except Exception:
+            except Exception as _e:
+                print(f"[youtube_music] yt_dlp fallback failed: {_e}", flush=True)
                 # ignore fallback errors and return whatever we have
                 pass
 
@@ -55,8 +79,11 @@ def get_song_by_id(video_id):
         "quiet": True
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    if _YTDLP_AVAILABLE and yt_dlp is not None:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    else:
+        return {"success": False, "message": "yt_dlp not available on server"}
 
     return {
         "success": True,
