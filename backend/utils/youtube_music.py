@@ -154,6 +154,25 @@ def get_song_by_id(video_id):
     }
 
 
+def get_stream_url(video_id):
+    """Return a playable audio stream URL for the given YouTube video id.
+    Uses yt_dlp on the server. Returns {'success': True, 'data': {'stream_url': url}} or error.
+    """
+    if _YTDLP_AVAILABLE and yt_dlp is not None:
+        try:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            ydl_opts = {"format": "bestaudio", "quiet": True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            stream_url = info.get('url')
+            if stream_url:
+                return {"success": True, "data": {"stream_url": stream_url}}
+            return {"success": False, "message": "Could not resolve stream URL"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    return {"success": False, "message": "yt_dlp not available on server"}
+
+
 def search_all(query):
     return search_songs(query)
 

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/auth_service.dart';
+import '../services/music_service.dart';
+import '../services/player_service.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/full_player.dart';
 import 'home_screen.dart';
@@ -21,7 +23,56 @@ class _MainScreenState extends State<MainScreen> {
   final AuthService _authService = AuthService();
 
   void _onSongSelected(Song song) {
+    // Set current song immediately for UI then attempt to load stream and play
     setState(() => _currentSong = song);
+    _loadAndPlay(song);
+  }
+
+  Future<void> _loadAndPlay(Song song) async {
+    final PlayerService player = PlayerService();
+    // Ensure we have streamUrl; fetch full song if missing
+    String? url = song.streamUrl;
+    if (url == null || url.isEmpty) {
+      final full = await MusicService().getSong(song.id);
+      url = full?.streamUrl;
+      if (full != null) {
+        setState(() => _currentSong = full);
+      }
+    }
+    if (url != null && url.isNotEmpty) {
+      print('[MainScreen] playing url from backend: $url');
+      final ok = await player.playUrl(url);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Playback failed: unable to load stream')),
+        );
+      }
+    } else {
+      // Try resolving YouTube stream client-side using PlayerService
+      final videoId = song.id;
+      print('[MainScreen] no backend streamUrl, will try video id: $videoId');
+      bool played = false;
+      if (videoId != null && videoId.isNotEmpty) {
+        // If running on Web, youtube_explode_dart cannot fetch YouTube streams due to CORS.
+        if (true) {
+          // Try backend stream endpoint first (works on Web because backend can fetch yt-dlp)
+          final backendUrl = await MusicService().getStreamUrl(videoId);
+          if (backendUrl != null && backendUrl.isNotEmpty) {
+            print('[MainScreen] obtained backend stream url: $backendUrl');
+            played = await player.playUrl(backendUrl);
+          }
+        }
+        // If backend didn't provide stream, try client-side resolver (non-web only)
+        if (!played) {
+          played = await player.playYoutubeVideo(videoId);
+        }
+      }
+      if (!played && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Playback failed: no stream URL available. On Web this requires a backend stream proxy.')),
+        );
+      }
+    }
   }
 
   void _toggleFullPlayer() {

@@ -89,3 +89,14 @@ def trending():
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
     return jsonify({"success": True, "data": result.get("data", result)}), 200
+
+
+@music_bp.route("/stream/<video_id>", methods=["GET"])
+def stream(video_id):
+    try:
+        result = youtube_music.get_stream_url(video_id)
+        if result.get("success") is False:
+            return jsonify({"success": False, "message": result.get("message", "Failed to resolve stream URL")}), 502
+        return jsonify({"success": True, "data": result.get("data")}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500

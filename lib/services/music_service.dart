@@ -41,6 +41,15 @@ class MusicService {
     return null;
   }
 
+  Future<String?> getStreamUrl(String songId) async {
+    final result = await _api.get('/music/stream/$songId');
+    if (result['success'] == true && result['data'] != null) {
+      final data = result['data'];
+      return data['stream_url'] as String? ?? data['streamUrl'] as String?;
+    }
+    return null;
+  }
+
   Future<Album?> getAlbum(String albumId) async {
     final result = await _api.get('/music/album/$albumId');
     if (result['success'] == true && result['data'] != null) {

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/player_service.dart';
+import 'dart:async';
 
 class FullPlayerScreen extends StatefulWidget {
   final VoidCallback onClose;
@@ -27,6 +29,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
   late AnimationController _slideController;
   late Animation<Offset> _slideAnimation;
   final MusicService _musicService = MusicService();
+  final PlayerService _player = PlayerService();
+  late final StreamSubscription<bool> _playingSub;
 
   @override
   void initState() {
@@ -44,6 +48,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     ));
     _slideController.forward();
     _checkLiked();
+    _playingSub = _player.playingStream.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+    });
   }
 
   @override
@@ -64,6 +71,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
 
   @override
   void dispose() {
+    _playingSub.cancel();
     _slideController.dispose();
     super.dispose();
   }
@@ -364,8 +372,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         onPressed: () {},
                       ),
                       GestureDetector(
-                        onTap: () =>
-                            setState(() => _isPlaying = !_isPlaying),
+                        onTap: () {
+                          if (_isPlaying) {
+                            _player.pause();
+                          } else {
+                            _player.resume();
+                          }
+                        },
                         child: Container(
                           width: 64,
                           height: 64,

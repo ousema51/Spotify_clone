@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/player_service.dart';
 
 class MiniPlayer extends StatefulWidget {
   final Song? currentSong;
@@ -19,6 +21,9 @@ class _MiniPlayerState extends State<MiniPlayer>
   bool _isLiked = false;
   late AnimationController _progressController;
   final MusicService _musicService = MusicService();
+  final PlayerService _player = PlayerService();
+  late final Stream<bool> _playingStream;
+  late final StreamSubscription<bool> _playingSub;
 
   @override
   void initState() {
@@ -28,6 +33,15 @@ class _MiniPlayerState extends State<MiniPlayer>
       duration: const Duration(seconds: 10),
     );
     _checkLiked();
+    _playingStream = _player.playingStream;
+    _playingSub = _playingStream.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+      if (playing) {
+        _progressController.forward();
+      } else {
+        _progressController.stop();
+      }
+    });
   }
 
   @override
@@ -48,19 +62,17 @@ class _MiniPlayerState extends State<MiniPlayer>
 
   @override
   void dispose() {
+    _playingSub.cancel();
     _progressController.dispose();
     super.dispose();
   }
 
   void _togglePlay() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-      if (_isPlaying) {
-        _progressController.forward();
-      } else {
-        _progressController.stop();
-      }
-    });
+    if (_isPlaying) {
+      _player.pause();
+    } else {
+      _player.resume();
+    }
   }
 
   Future<void> _toggleLike() async {
