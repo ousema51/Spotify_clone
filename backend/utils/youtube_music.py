@@ -165,14 +165,16 @@ def _normalize(r):
 
 def search_songs(query="", page=1, limit=20):
     if not ytmusic:
-        return {"success": False, "message": "ytmusicapi not available"}
+        import traceback
+        return {"success": False, "message": "ytmusicapi not available", "traceback": traceback.format_exc()}
     try:
         start = (page - 1) * limit
         raw = ytmusic.search(query, filter="songs", limit=start + limit) or []
         songs = [_normalize(r) for r in raw[start:start + limit] if r.get("videoId")]
         return {"success": True, "data": songs}
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        import traceback
+        return {"success": False, "message": str(e), "traceback": traceback.format_exc()}
 
 
 def search_all(query=""):
@@ -180,11 +182,15 @@ def search_all(query=""):
 
 
 def get_stream_url(video_id=""):
+    import traceback
     if not video_id or not video_id.strip():
-        return {"success": False, "message": "No video_id provided"}
+        return {"success": False, "message": "No video_id provided", "traceback": traceback.format_exc()}
 
     video_id = video_id.strip()
-    url = _get_stream_url(video_id)
+    try:
+        url = _get_stream_url(video_id)
+    except Exception as e:
+        return {"success": False, "message": str(e), "traceback": traceback.format_exc()}
 
     if url:
         return {"success": True, "data": {"stream_url": url}}
@@ -192,6 +198,7 @@ def get_stream_url(video_id=""):
     return {
         "success": False,
         "message": "Could not get stream for {}".format(video_id),
+        "traceback": traceback.format_exc(),
     }
 
 
