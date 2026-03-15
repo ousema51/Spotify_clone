@@ -17,6 +17,7 @@ except Exception as _e:
 import requests
 import re
 import json
+import os
 
 ytmusic = None
 if _YT_AVAILABLE:
@@ -162,6 +163,10 @@ def get_stream_url(video_id):
         try:
             url = f"https://www.youtube.com/watch?v={video_id}"
             ydl_opts = {"format": "bestaudio", "quiet": True}
+            # If a cookies file path is provided via env var, pass it to yt-dlp
+            cookies_path = os.environ.get("YTDLP_COOKIES_PATH")
+            if cookies_path:
+                ydl_opts["cookiefile"] = cookies_path
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             stream_url = info.get('url')
@@ -169,7 +174,16 @@ def get_stream_url(video_id):
                 return {"success": True, "data": {"stream_url": stream_url}}
             return {"success": False, "message": "Could not resolve stream URL"}
         except Exception as e:
-            return {"success": False, "message": str(e)}
+            msg = str(e)
+            # If yt-dlp complains about needing cookies, return a clearer message
+            if "Sign in to confirm you're not a bot" in msg or "cookies" in msg.lower():
+                advice = (
+                    "Sign in required for this video. Export YouTube cookies from your browser "
+                    "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file. "
+                    "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for details."
+                )
+                return {"success": False, "message": advice}
+            return {"success": False, "message": msg}
     return {"success": False, "message": "yt_dlp not available on server"}
 
 
