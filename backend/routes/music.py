@@ -16,6 +16,7 @@ def search():
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
     try:
+            print(f"[search] q={query!r} type={search_type} page={page} limit={limit}", flush=True)
         if search_type == "songs":
             result = youtube_music.search_songs(query, page=page, limit=limit)
         elif search_type == "albums":
@@ -30,9 +31,16 @@ def search():
             return jsonify({"success": True, "data": result}), 200
         if isinstance(result, dict):
             if result.get("success") is False:
+                    print(f"[search] error: {result.get('message')}", flush=True)
                 return jsonify({"success": False, "message": result.get("message", "Search failed")}), 502
             # Ensure data key exists
             data = result.get("data", None)
+                # Log number of results
+                try:
+                    count = len(data) if data is not None else 0
+                except Exception:
+                    count = 1
+                print(f"[search] returned {count} result(s)", flush=True)
             return jsonify({"success": True, "data": data}), 200
 
         # Fallback

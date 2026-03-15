@@ -21,6 +21,27 @@ def search_songs(query, page=1, limit=20):
                 "thumbnail": (r.get("thumbnails") and len(r.get("thumbnails")) > 0 and r.get("thumbnails")[-1].get("url")) or None
             })
 
+        # If ytmusic returned no results, try a lightweight fallback using yt_dlp
+        if not songs:
+            try:
+                query_str = f"ytsearch{limit}:{query}"
+                ydl_opts = {"quiet": True, "skip_download": True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(query_str, download=False)
+                entries = info.get('entries') or []
+                songs = []
+                for e in entries[start:end]:
+                    songs.append({
+                        "id": e.get("id") or e.get("webpage_url") or e.get("url"),
+                        "title": e.get("title"),
+                        "artist": (e.get("uploader") or e.get("artist")),
+                        "duration": e.get("duration"),
+                        "thumbnail": e.get("thumbnail")
+                    })
+            except Exception:
+                # ignore fallback errors and return whatever we have
+                pass
+
         return {"success": True, "data": songs}
     except Exception as e:
         return {"success": False, "message": str(e)}
