@@ -1,3 +1,7 @@
+"""
+YouTube Music backend — search via ytmusicapi, streams via public APIs.
+"""
+
 import requests
 import logging
 
@@ -15,13 +19,12 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
-# Stream URL resolution — multiple strategies
+# Stream URL resolution
 # ---------------------------------------------------------------------------
 
-def _get_stream_url(video_id: str) -> str | None:
+def _get_stream_url(video_id):
     """Try multiple public APIs to get a playable audio URL."""
 
-    # Strategy 1: Piped instances
     piped_instances = [
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
@@ -41,12 +44,10 @@ def _get_stream_url(video_id: str) -> str | None:
                 continue
             data = resp.json()
 
-            # audioStreams is where Piped puts direct audio URLs
             audio_streams = data.get("audioStreams") or []
             if not audio_streams:
                 continue
 
-            # Filter to streams that have a URL and pick highest bitrate
             valid = [s for s in audio_streams if s.get("url")]
             if not valid:
                 continue
@@ -59,7 +60,6 @@ def _get_stream_url(video_id: str) -> str | None:
             logger.warning(f"Piped {base} failed: {e}")
             continue
 
-    # Strategy 2: Invidious instances
     invidious_instances = [
         "https://inv.nadeko.net",
         "https://invidious.fdn.fr",
@@ -78,7 +78,6 @@ def _get_stream_url(video_id: str) -> str | None:
                 continue
             data = resp.json()
 
-            # adaptiveFormats contains audio-only streams
             formats = data.get("adaptiveFormats") or []
             audio_formats = [
                 f for f in formats
@@ -95,7 +94,6 @@ def _get_stream_url(video_id: str) -> str | None:
             logger.warning(f"Invidious {base} failed: {e}")
             continue
 
-    # Strategy 3: Cobalt API
     try:
         resp = requests.post(
             "https://api.cobalt.tools/",
@@ -125,18 +123,14 @@ def _get_stream_url(video_id: str) -> str | None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_thumbnail(r: dict) -> str | None:
-    """Extract thumbnail URL from a ytmusicapi result, handling all formats."""
-    # Direct thumbnail field
+def _get_thumbnail(r):
+    """Extract thumbnail URL from a ytmusicapi result."""
     thumbs = r.get("thumbnails")
     if isinstance(thumbs, list) and thumbs:
-        # Get the largest one
         url = thumbs[-1].get("url")
         if url:
-            # ytmusicapi sometimes returns w/ size params, clean URL works fine
             return url
 
-    # Nested under "thumbnail" → "thumbnails"
     thumb_obj = r.get("thumbnail")
     if isinstance(thumb_obj, dict):
         inner = thumb_obj.get("thumbnails")
@@ -145,15 +139,14 @@ def _get_thumbnail(r: dict) -> str | None:
             if url:
                 return url
 
-    # Fallback: construct from video ID
     vid = r.get("videoId") or r.get("id")
     if vid:
-        return f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+        return "https://img.youtube.com/vi/{}/hqdefault.jpg".format(vid)
 
     return None
 
 
-def _normalize(r: dict) -> dict:
+def _normalize(r):
     artists = r.get("artists") or []
     artist = artists[0].get("name") if artists else r.get("artist")
 
@@ -170,7 +163,7 @@ def _normalize(r: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
-def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
+def search_songs(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
@@ -182,11 +175,11 @@ def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
         return {"success": False, "message": str(e)}
 
 
-def search_all(query: str):
+def search_all(query=""):
     return search_songs(query)
 
 
-def get_stream_url(video_id: str) -> dict:
+def get_stream_url(video_id=""):
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
@@ -198,26 +191,21 @@ def get_stream_url(video_id: str) -> dict:
 
     return {
         "success": False,
-        "message": f"Could not get stream for {video_id}",
-        "debug": {
-            "video_id": video_id,
-            "hint": "All proxy APIs failed. Try again in a moment.",
-        },
+        "message": "Could not get stream for {}".format(video_id),
     }
 
 
-def get_song_by_id(video_id: str) -> dict:
+def get_song_by_id(video_id=""):
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
 
-    # Metadata
     meta = {
         "title": None,
         "artist": None,
         "duration": None,
-        "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+        "thumbnail": "https://img.youtube.com/vi/{}/hqdefault.jpg".format(video_id),
     }
 
     if ytmusic:
@@ -233,22 +221,16 @@ def get_song_by_id(video_id: str) -> dict:
         except Exception:
             pass
 
-    # Stream
     url = _get_stream_url(video_id)
     if not url:
-        return {"success": False, "message": f"Could not get stream for {video_id}"}
+        return {"success": False, "message": "Could not get stream for {}".format(video_id)}
 
-    return {
-        "success": True,
-        "data": {
-            "id": video_id,
-            "stream_url": url,
-            **meta,
-        },
-    }
+    data = {"id": video_id, "stream_url": url}
+    data.update(meta)
+    return {"success": True, "data": data}
 
 
-def get_stream_from_search(query: str, index: int = 0) -> dict:
+def get_stream_from_search(query="", index=0):
     result = search_songs(query, limit=index + 5)
     if not result.get("success") or not result.get("data"):
         return {"success": False, "message": "No results"}
@@ -267,7 +249,7 @@ def get_stream_from_search(query: str, index: int = 0) -> dict:
 # Albums / Artists / Trending
 # ---------------------------------------------------------------------------
 
-def search_albums(query: str, page: int = 1, limit: int = 20) -> dict:
+def search_albums(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": True, "data": []}
     try:
@@ -286,7 +268,7 @@ def search_albums(query: str, page: int = 1, limit: int = 20) -> dict:
         return {"success": True, "data": []}
 
 
-def search_artists(query: str, page: int = 1, limit: int = 20) -> dict:
+def search_artists(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": True, "data": []}
     try:
@@ -304,7 +286,7 @@ def search_artists(query: str, page: int = 1, limit: int = 20) -> dict:
         return {"success": True, "data": []}
 
 
-def get_album_by_id(album_id: str) -> dict:
+def get_album_by_id(album_id=""):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
@@ -320,7 +302,7 @@ def get_album_by_id(album_id: str) -> dict:
         return {"success": False, "message": str(e)}
 
 
-def get_artist_by_id(artist_id: str) -> dict:
+def get_artist_by_id(artist_id=""):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
@@ -335,7 +317,7 @@ def get_artist_by_id(artist_id: str) -> dict:
         return {"success": False, "message": str(e)}
 
 
-def get_trending() -> dict:
+def get_trending():
     if not ytmusic:
         return {"success": True, "data": []}
     try:
@@ -345,17 +327,14 @@ def get_trending() -> dict:
         return {"success": True, "data": []}
 
 
-def health_check() -> dict:
+def health_check():
     """Test everything and report what works."""
     status = {
         "ytmusic": ytmusic is not None,
         "search": False,
         "stream": False,
-        "stream_source": None,
-        "thumbnail_test": None,
     }
 
-    # Test search
     if ytmusic:
         try:
             r = ytmusic.search("test", filter="songs", limit=1)
@@ -365,10 +344,7 @@ def health_check() -> dict:
         except Exception as e:
             status["search_error"] = str(e)
 
-    # Test stream with a known video
     test_url = _get_stream_url("dQw4w9WgXcQ")
     status["stream"] = bool(test_url)
-    if test_url:
-        status["stream_source"] = test_url[:60] + "..."
 
     return {"success": True, "data": status}
