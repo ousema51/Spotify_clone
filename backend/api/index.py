@@ -54,7 +54,6 @@ def health():
         db.get_db().command("ping")
         return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
     except Exception as exc:
-        #return jsonify(health_check())
         return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
 
 
