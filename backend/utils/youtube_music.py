@@ -237,11 +237,7 @@ def get_stream_url(video_id: str) -> dict:
         except Exception:
             pass
 
-    #return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        audio_url = info["url"]
-    return {audio_url}
+    return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
 
 def get_stream_from_search(query: str, index: int = 0) -> dict:
     if not ytmusic:
