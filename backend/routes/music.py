@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+import traceback
 
 from utils import youtube_music
 
@@ -9,14 +10,21 @@ music_bp = Blueprint("music", __name__)
 def search():
     query = (request.args.get("q") or "").strip()
     search_type = (request.args.get("type") or "all").lower()
-    page = int(request.args.get("page", 1))
-    limit = int(request.args.get("limit", 20))
+    # Defensive parsing for page/limit
+    try:
+        page = int(request.args.get("page", 1))
+    except Exception:
+        return jsonify({"success": False, "message": "Invalid 'page' parameter"}), 400
+    try:
+        limit = int(request.args.get("limit", 20))
+    except Exception:
+        return jsonify({"success": False, "message": "Invalid 'limit' parameter"}), 400
 
     if not query:
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
     try:
-            print(f"[search] q={query!r} type={search_type} page={page} limit={limit}", flush=True)
+        print(f"[search] q={query!r} type={search_type} page={page} limit={limit}", flush=True)
         if search_type == "songs":
             result = youtube_music.search_songs(query, page=page, limit=limit)
         elif search_type == "albums":
@@ -28,24 +36,26 @@ def search():
 
         # Normalize result: if a list is returned, wrap it; if dict with success, return as-is
         if isinstance(result, list):
-            return jsonify({"success": True, "data": result}), 200
-        if isinstance(result, dict):
+            data = result
+        elif isinstance(result, dict):
             if result.get("success") is False:
-                    print(f"[search] error: {result.get('message')}", flush=True)
+                print(f"[search] error: {result.get('message')}", flush=True)
                 return jsonify({"success": False, "message": result.get("message", "Search failed")}), 502
-            # Ensure data key exists
             data = result.get("data", None)
-                # Log number of results
-                try:
-                    count = len(data) if data is not None else 0
-                except Exception:
-                    count = 1
-                print(f"[search] returned {count} result(s)", flush=True)
-            return jsonify({"success": True, "data": data}), 200
+        else:
+            data = result
 
-        # Fallback
-        return jsonify({"success": True, "data": result}), 200
+        # Log number of results
+        try:
+            count = len(data) if data is not None else 0
+        except Exception:
+            count = 1
+        print(f"[search] returned {count} result(s)", flush=True)
+
+        return jsonify({"success": True, "data": data}), 200
     except Exception as e:
+        print("[search] exception:", flush=True)
+        traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
 
 
