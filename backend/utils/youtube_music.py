@@ -13,6 +13,7 @@ except Exception as _e:
     print(f"[youtube_music] yt_dlp not available: {_e}", flush=True)
     yt_dlp = None
     _YTDLP_AVAILABLE = False
+import traceback
 
 import requests
 import re
@@ -155,13 +156,51 @@ def get_stream_url(video_id):
             ]
             for url in candidates:
                 try:
+                    print(f"[youtube_music] attempting extraction for: {url}", flush=True)
                     ydl_opts = {"format": "bestaudio", "quiet": True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(url, download=False)
+                    # Log some info keys for debugging
+                    try:
+                        print(f"[youtube_music] yt-dlp info keys: {list(info.keys())}", flush=True)
+                    except Exception:
+                        pass
+
+                    # Prefer direct 'url' if present
                     stream_url = info.get('url')
                     if stream_url:
+                        print(f"[youtube_music] extracted direct url", flush=True)
                         return {"success": True, "data": {"stream_url": stream_url}}
-                except Exception:
+
+                    # Otherwise inspect formats to pick best audio
+                    formats = info.get('formats') or info.get('requested_formats') or []
+                    if formats:
+                        # pick highest abr audio-only or best audio-containing format
+                        best = None
+                        best_abr = -1
+                        for f in formats:
+                            # some formats use 'abr' (audio bitrate)
+                            abr = f.get('abr') or f.get('tbr') or 0
+                            # prefer audio-only types
+                            acodec = f.get('acodec')
+                            vcodec = f.get('vcodec')
+                            is_audio_only = (vcodec in (None, 'none', 'unknown') or vcodec == 'none') and acodec not in (None, 'none')
+                            score = int(abr) if abr else 0
+                            # boost audio-only formats
+                            if is_audio_only:
+                                score += 10000
+                            if score > best_abr:
+                                best_abr = score
+                                best = f
+                        if best:
+                            stream_url = best.get('url')
+                            if stream_url:
+                                print(f"[youtube_music] selected format url from formats", flush=True)
+                                return {"success": True, "data": {"stream_url": stream_url}}
+                    # no usable url from this candidate
+                except Exception as e:
+                    print(f"[youtube_music] extraction failed for {url}: {e}", flush=True)
+                    print(traceback.format_exc(), flush=True)
                     pass
 
             # Fallback: use ytmusicapi to find a music entry and try extracting from that
