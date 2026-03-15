@@ -1,372 +1,256 @@
 """
 YouTube Music search and audio streaming backend.
+Designed to run reliably on Vercel serverless functions.
 
 Dependencies:
-  - ytmusicapi  (music-specific search)
-  - yt-dlp      (audio stream URL extraction)
+  - ytmusicapi  (music search — lightweight, no binary deps)
+  - requests    (HTTP calls to streaming proxy)
 """
 
-import traceback
 import logging
+import requests as http_requests
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Optional dependency loading
+# ytmusicapi initialization (lightweight, works on Vercel)
 # ---------------------------------------------------------------------------
-_YT_AVAILABLE = False
-_YTDLP_AVAILABLE = False
-
 ytmusic = None
-yt_dlp = None
-YTMusic = None
+_YT_AVAILABLE = False
 
 try:
-    from ytmusicapi import YTMusic as _YTMusic
-    YTMusic = _YTMusic
+    from ytmusicapi import YTMusic
+
+    ytmusic = YTMusic()
     _YT_AVAILABLE = True
-except ImportError:
-    logger.warning("ytmusicapi not installed")
+    logger.info("ytmusicapi initialized")
 except Exception as e:
-    logger.warning(f"ytmusicapi import error: {e}")
+    logger.warning(f"ytmusicapi init failed: {e}")
 
-try:
-    import yt_dlp as _yt_dlp
-    yt_dlp = _yt_dlp
-    _YTDLP_AVAILABLE = True
-except ImportError:
-    logger.warning("yt-dlp not installed")
-except Exception as e:
-    logger.warning(f"yt-dlp import error: {e}")
-
-# Initialize ytmusic client — try multiple strategies
-if _YT_AVAILABLE and YTMusic is not None:
-    # Strategy 1: default (no auth)
+    # Retry with explicit locale
     try:
-        ytmusic = YTMusic()
-        # Smoke test: run a tiny search to confirm it actually works
-        _test = ytmusic.search("test", filter="songs", limit=1)
-        if not _test:
-            raise RuntimeError("smoke test returned empty")
-        logger.info("ytmusicapi initialized (default)")
-    except Exception as e1:
-        logger.warning(f"ytmusicapi default init failed: {e1}")
-        ytmusic = None
+        from ytmusicapi import YTMusic
 
-        # Strategy 2: with language/geo params
+        ytmusic = YTMusic(language="en", location="US")
+        _YT_AVAILABLE = True
+        logger.info("ytmusicapi initialized (en/US fallback)")
+    except Exception as e2:
+        logger.error(f"ytmusicapi completely unavailable: {e2}")
+        _YT_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Streaming proxy configuration
+# ---------------------------------------------------------------------------
+# These are public APIs that convert a YouTube video ID into a playable
+# audio stream URL. They run on infrastructure that YouTube doesn't block.
+# If one goes down, the next is tried automatically.
+
+_STREAM_PROXIES = [
+    # Cobalt API — returns direct download/stream URLs
+    {
+        "name": "cobalt",
+        "url": "https://api.cobalt.tools/",
+        "method": "POST",
+        "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        "body": lambda vid: {
+            "url": f"https://music.youtube.com/watch?v={vid}",
+            "audioFormat": "mp3",
+            "isAudioOnly": True,
+        },
+        "extract": lambda r: r.json().get("url") or r.json().get("audio"),
+    },
+    # Invidious public instances — provides audio proxy
+    {
+        "name": "invidious",
+        "url": "https://inv.nadeko.net/api/v1/videos/{vid}",
+        "method": "GET",
+        "headers": {},
+        "body": lambda vid: None,
+        "extract": lambda r: _extract_invidious_audio(r.json()),
+    },
+    # Piped API — another YouTube frontend with audio extraction
+    {
+        "name": "piped",
+        "url": "https://pipedapi.kavin.rocks/streams/{vid}",
+        "method": "GET",
+        "headers": {},
+        "body": lambda vid: None,
+        "extract": lambda r: _extract_piped_audio(r.json()),
+    },
+]
+
+
+def _extract_invidious_audio(data: dict) -> str | None:
+    """Pull the best audio URL from an Invidious API response."""
+    formats = data.get("adaptiveFormats") or []
+    best_url = None
+    best_bitrate = 0
+
+    for f in formats:
+        if f.get("type", "").startswith("audio/"):
+            bitrate = f.get("bitrate") or 0
+            if bitrate > best_bitrate and f.get("url"):
+                best_bitrate = bitrate
+                best_url = f["url"]
+
+    return best_url
+
+
+def _extract_piped_audio(data: dict) -> str | None:
+    """Pull the best audio URL from a Piped API response."""
+    streams = data.get("audioStreams") or []
+    best_url = None
+    best_bitrate = 0
+
+    for s in streams:
+        bitrate = s.get("bitrate") or 0
+        if bitrate > best_bitrate and s.get("url"):
+            best_bitrate = bitrate
+            best_url = s["url"]
+
+    return best_url
+
+
+def _resolve_stream_url(video_id: str) -> dict | None:
+    """Try each streaming proxy until one returns a valid audio URL.
+
+    Returns dict with stream info or None if all fail.
+    """
+    errors = []
+
+    for proxy in _STREAM_PROXIES:
         try:
-            ytmusic = YTMusic(language="en", location="US")
-            _test = ytmusic.search("test", filter="songs", limit=1)
-            if not _test:
-                raise RuntimeError("smoke test returned empty")
-            logger.info("ytmusicapi initialized (en/US)")
-        except Exception as e2:
-            logger.warning(f"ytmusicapi en/US init failed: {e2}")
-            ytmusic = None
-            _YT_AVAILABLE = False
+            name = proxy["name"]
+            url = proxy["url"].replace("{vid}", video_id)
+            method = proxy["method"]
+            headers = proxy.get("headers") or {}
+            body = proxy["body"](video_id)
+
+            logger.info(f"Trying stream proxy: {name}")
+
+            if method == "POST":
+                resp = http_requests.post(
+                    url, json=body, headers=headers, timeout=12
+                )
+            else:
+                resp = http_requests.get(url, headers=headers, timeout=12)
+
+            if resp.status_code != 200:
+                errors.append(f"{name}: HTTP {resp.status_code}")
+                continue
+
+            stream_url = proxy["extract"](resp)
+
+            if stream_url and stream_url.startswith("http"):
+                logger.info(f"Stream resolved via {name}")
+                return {
+                    "stream_url": stream_url,
+                    "proxy": name,
+                }
+
+            errors.append(f"{name}: no URL in response")
+
+        except Exception as e:
+            errors.append(f"{name}: {str(e)[:100]}")
+            logger.warning(f"Proxy {proxy['name']} failed: {e}")
+            continue
+
+    logger.error(
+        f"All stream proxies failed for {video_id}: {'; '.join(errors)}"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _safe_first(lst, key: str = "name"):
-    """Return *key* from the first element of *lst*, or None."""
     if isinstance(lst, list) and len(lst) > 0 and isinstance(lst[0], dict):
         return lst[0].get(key)
     return None
 
 
 def _best_thumbnail(thumbnails):
-    """Return the highest-resolution thumbnail URL."""
     if isinstance(thumbnails, list) and len(thumbnails) > 0:
         return thumbnails[-1].get("url")
     return None
 
 
 def _normalize_song(raw: dict) -> dict:
-    """Turn a ytmusicapi song result into the flat dict the frontend expects."""
-    vid = raw.get("videoId") or raw.get("id")
-    title = raw.get("title") or "Unknown"
-    artist = _safe_first(raw.get("artists")) or raw.get("artist") or "Unknown Artist"
-    duration = raw.get("duration") or raw.get("duration_seconds")
-    thumbnail = _best_thumbnail(raw.get("thumbnails")) or raw.get("thumbnail")
-
+    """Convert ytmusicapi result → flat frontend-ready dict."""
     return {
-        "id": vid,
-        "title": title,
-        "artist": artist,
-        "duration": duration,
-        "thumbnail": thumbnail,
+        "id": raw.get("videoId") or raw.get("id"),
+        "title": raw.get("title") or "Unknown",
+        "artist": (
+            _safe_first(raw.get("artists"))
+            or raw.get("artist")
+            or "Unknown Artist"
+        ),
+        "duration": raw.get("duration") or raw.get("duration_seconds"),
+        "thumbnail": (
+            _best_thumbnail(raw.get("thumbnails")) or raw.get("thumbnail")
+        ),
     }
 
 
-def _get_ytdlp_opts() -> dict:
-    """Base yt-dlp options that work reliably across environments."""
-    return {
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extract_flat": False,
-        # Bypass age-gate and some restrictions
-        "age_limit": None,
-        # Use android client which is less restrictive
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android_music", "android", "web"],
-            }
-        },
-        # Needed for some environments
-        "socket_timeout": 15,
-        "retries": 3,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "source_address": "0.0.0.0",
-        # HTTP headers to look like a real client
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 13; Pixel 7)"
-                " AppleWebKit/537.36 (KHTML, like Gecko)"
-                " Chrome/120.0.0.0 Mobile Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    }
-
-
-def _extract_stream_url(video_id: str) -> dict | None:
-    """Use yt-dlp to extract the best audio stream URL for *video_id*.
-
-    Returns a dict with stream info on success, or None on failure.
-    """
-    if not _YTDLP_AVAILABLE or yt_dlp is None:
-        return None
-
-    candidates = [
-        f"https://music.youtube.com/watch?v={video_id}",
-        f"https://www.youtube.com/watch?v={video_id}",
-    ]
-
-    opts = _get_ytdlp_opts()
-    last_error = None
-
-    for watch_url in candidates:
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(watch_url, download=False)
-
-            if not info:
-                continue
-
-            # --- Try to find a working stream URL ---
-
-            # 1) Direct URL from the selected format
-            stream_url = info.get("url")
-            if stream_url and stream_url.startswith("http"):
-                return {
-                    "stream_url": stream_url,
-                    "title": info.get("title"),
-                    "artist": info.get("artist") or info.get("uploader"),
-                    "duration": info.get("duration"),
-                    "thumbnail": info.get("thumbnail"),
-                }
-
-            # 2) requested_formats (when yt-dlp merges audio+video)
-            req_formats = info.get("requested_formats") or []
-            for rf in req_formats:
-                acodec = rf.get("acodec") or "none"
-                if acodec != "none" and rf.get("url", "").startswith("http"):
-                    return {
-                        "stream_url": rf["url"],
-                        "title": info.get("title"),
-                        "artist": info.get("artist") or info.get("uploader"),
-                        "duration": info.get("duration"),
-                        "thumbnail": info.get("thumbnail"),
-                    }
-
-            # 3) Walk all formats, pick best audio-only
-            formats = info.get("formats") or []
-            best_url = None
-            best_score = -1
-            for f in formats:
-                f_url = f.get("url") or ""
-                if not f_url.startswith("http"):
-                    continue
-                acodec = f.get("acodec") or "none"
-                vcodec = f.get("vcodec") or "none"
-                if acodec == "none":
-                    continue
-
-                abr = 0
-                try:
-                    abr = float(f.get("abr") or f.get("tbr") or 0)
-                except (ValueError, TypeError):
-                    pass
-
-                score = abr
-                # Strongly prefer audio-only streams
-                if vcodec in ("none", "unknown"):
-                    score += 10_000
-                # Prefer m4a/webm over others for browser compatibility
-                ext = f.get("ext") or ""
-                if ext in ("m4a", "webm", "opus"):
-                    score += 5_000
-
-                if score > best_score:
-                    best_score = score
-                    best_url = f_url
-
-            if best_url:
-                return {
-                    "stream_url": best_url,
-                    "title": info.get("title"),
-                    "artist": info.get("artist") or info.get("uploader"),
-                    "duration": info.get("duration"),
-                    "thumbnail": info.get("thumbnail"),
-                }
-
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"yt-dlp failed for {watch_url}: {e}")
-            continue
-
-    logger.error(f"All extraction attempts failed for {video_id}. Last error: {last_error}")
-    return None
-
-
 # ---------------------------------------------------------------------------
-# yt-dlp fallback search (music-only via YouTube Music)
+# Public API — Search
 # ---------------------------------------------------------------------------
 
-def _ytdlp_music_search(query: str, limit: int = 20) -> list:
-    """Use yt-dlp to search YouTube Music directly as a fallback."""
-    if not _YTDLP_AVAILABLE or yt_dlp is None:
-        return []
-
-    search_url = f"https://music.youtube.com/search?q={query}"
-    opts = {
-        **_get_ytdlp_opts(),
-        "extract_flat": True,
-        "playlist_items": f"1:{limit}",
-        "default_search": "ytsearch",
-    }
-
-    try:
-        # yt-dlp supports ytmsearch: prefix for YouTube Music
-        search_query = f"ytmsearch{limit}:{query}"
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
-        entries = info.get("entries") or []
-        results = []
-        for e in entries:
-            vid = e.get("id") or e.get("url", "").split("v=")[-1].split("&")[0]
-            if not vid:
-                continue
-            results.append({
-                "id": vid,
-                "title": e.get("title") or "Unknown",
-                "artist": e.get("artist") or e.get("uploader") or e.get("channel") or "Unknown Artist",
-                "duration": e.get("duration"),
-                "thumbnail": e.get("thumbnail") or e.get("thumbnails", [{}])[-1].get("url") if e.get("thumbnails") else None,
-            })
-        return results
-    except Exception as e:
-        logger.warning(f"yt-dlp music search failed: {e}")
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Public API – search
-# ---------------------------------------------------------------------------
 
 def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
-    """Search YouTube Music for songs matching *query*.
-
-    Returns ``{success: True, data: [...]}``.
-    Uses ytmusicapi as primary, yt-dlp ytmsearch as fallback.
-    """
+    """Search YouTube Music for songs. Returns {success, data: [...]}."""
     if not query or not query.strip():
         return {"success": False, "message": "Empty search query"}
 
     query = query.strip()
-    start = max(0, (page - 1) * limit)
-    end = start + limit
 
-    # --- Primary: ytmusicapi ---
-    if _YT_AVAILABLE and ytmusic is not None:
-        try:
-            raw_results = ytmusic.search(query, filter="songs", limit=limit + start) or []
-            songs = [_normalize_song(r) for r in raw_results[start:end]]
-            # Drop entries with no usable id
-            songs = [s for s in songs if s.get("id")]
+    if not _YT_AVAILABLE or ytmusic is None:
+        return {
+            "success": False,
+            "message": "Music search is not available. ytmusicapi failed to initialize.",
+        }
 
-            if songs:
-                return {"success": True, "data": songs}
+    try:
+        start = max(0, (page - 1) * limit)
+        end = start + limit
 
-            logger.warning(f"ytmusicapi returned 0 results for: {query}")
-        except Exception as e:
-            logger.warning(f"ytmusicapi search failed: {e}")
+        raw = ytmusic.search(query, filter="songs", limit=end) or []
+        songs = [_normalize_song(r) for r in raw[start:end]]
+        songs = [s for s in songs if s.get("id")]
 
-    # --- Fallback: yt-dlp YouTube Music search ---
-    if _YTDLP_AVAILABLE:
-        try:
-            fallback_results = _ytdlp_music_search(query, limit=limit + start)
-            songs = fallback_results[start:end]
-            songs = [s for s in songs if s.get("id")]
+        return {"success": True, "data": songs}
 
-            if songs:
-                return {"success": True, "data": songs}
-
-            logger.warning(f"yt-dlp music search returned 0 results for: {query}")
-        except Exception as e:
-            logger.warning(f"yt-dlp fallback search failed: {e}")
-
-    # --- Nothing worked ---
-    available = []
-    if _YT_AVAILABLE:
-        available.append("ytmusicapi")
-    if _YTDLP_AVAILABLE:
-        available.append("yt-dlp")
-
-    return {
-        "success": False,
-        "message": f"No results found for '{query}'",
-        "debug": {
-            "available_backends": available,
-            "ytmusic_initialized": ytmusic is not None,
-            "ytdlp_available": _YTDLP_AVAILABLE,
-        },
-    }
+    except Exception as e:
+        logger.error(f"search_songs failed: {e}")
+        return {"success": False, "message": f"Search failed: {str(e)}"}
 
 
 def search_all(query: str):
-    """Alias used by some route handlers."""
     return search_songs(query)
 
 
 # ---------------------------------------------------------------------------
-# Public API – stream URL
+# Public API — Stream URL
 # ---------------------------------------------------------------------------
 
-def get_stream_url(video_id: str) -> dict:
-    """Return a playable audio stream URL for *video_id*.
 
-    Response shape on success::
-        {"success": True, "data": {"stream_url": "<url>"}}
+def get_stream_url(video_id: str) -> dict:
+    """Return a playable audio stream URL for the given video ID.
+
+    Response: {success: True, data: {stream_url: "..."}}
     """
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
-
-    if not _YTDLP_AVAILABLE:
-        return {
-            "success": False,
-            "message": "yt-dlp is not available on this server",
-        }
-
-    result = _extract_stream_url(video_id)
+    result = _resolve_stream_url(video_id)
 
     if result and result.get("stream_url"):
         return {"success": True, "data": result}
@@ -375,49 +259,61 @@ def get_stream_url(video_id: str) -> dict:
         "success": False,
         "message": f"Could not resolve a stream URL for {video_id}",
         "debug": {
-            "ytdlp_available": _YTDLP_AVAILABLE,
-            "ytmusic_available": _YT_AVAILABLE,
             "video_id": video_id,
-            "hint": "Ensure yt-dlp is up to date: pip install -U yt-dlp",
+            "proxies_tried": [p["name"] for p in _STREAM_PROXIES],
+            "hint": "All streaming proxies failed. They may be temporarily down.",
         },
     }
 
 
 def get_song_by_id(video_id: str) -> dict:
-    """Return full metadata + stream URL for a single song.
-
-    Response shape on success::
-        {"success": True, "data": {"id", "title", "artist", "duration",
-                                    "thumbnail", "stream_url"}}
-    """
+    """Return metadata + stream URL for a single song."""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
 
-    if not _YTDLP_AVAILABLE or yt_dlp is None:
-        return {"success": False, "message": "yt-dlp is not available on this server"}
+    # Get metadata from ytmusicapi if available
+    metadata = {}
+    if _YT_AVAILABLE and ytmusic:
+        try:
+            song_info = ytmusic.get_song(video_id)
+            vd = song_info.get("videoDetails") or {}
+            metadata = {
+                "title": vd.get("title"),
+                "artist": vd.get("author"),
+                "duration": vd.get("lengthSeconds"),
+                "thumbnail": (
+                    _best_thumbnail(vd.get("thumbnail", {}).get("thumbnails"))
+                ),
+            }
+        except Exception as e:
+            logger.warning(f"get_song metadata failed: {e}")
 
-    result = _extract_stream_url(video_id)
+    # Get stream URL
+    result = _resolve_stream_url(video_id)
 
     if not result or not result.get("stream_url"):
-        return {"success": False, "message": f"Could not resolve stream for {video_id}"}
+        return {
+            "success": False,
+            "message": f"Could not resolve stream for {video_id}",
+        }
 
     return {
         "success": True,
         "data": {
             "id": video_id,
-            "title": result.get("title"),
-            "artist": result.get("artist"),
-            "duration": result.get("duration"),
-            "thumbnail": result.get("thumbnail"),
+            "title": metadata.get("title"),
+            "artist": metadata.get("artist"),
+            "duration": metadata.get("duration"),
+            "thumbnail": metadata.get("thumbnail"),
             "stream_url": result["stream_url"],
         },
     }
 
 
 def get_stream_from_search(query: str, index: int = 0) -> dict:
-    """Search YouTube Music and return the stream URL for the *index*-th hit."""
+    """Search and return stream URL for the Nth result."""
     search_result = search_songs(query, page=1, limit=index + 5)
 
     if not search_result.get("success") or not search_result.get("data"):
@@ -432,19 +328,25 @@ def get_stream_from_search(query: str, index: int = 0) -> dict:
 
     stream_result = get_stream_url(vid)
 
-    # Merge song metadata into the stream result
     if stream_result.get("success"):
         stream_result["data"]["id"] = vid
-        stream_result["data"]["title"] = stream_result["data"].get("title") or chosen.get("title")
-        stream_result["data"]["artist"] = stream_result["data"].get("artist") or chosen.get("artist")
-        stream_result["data"]["thumbnail"] = stream_result["data"].get("thumbnail") or chosen.get("thumbnail")
+        stream_result["data"]["title"] = (
+            stream_result["data"].get("title") or chosen.get("title")
+        )
+        stream_result["data"]["artist"] = (
+            stream_result["data"].get("artist") or chosen.get("artist")
+        )
+        stream_result["data"]["thumbnail"] = (
+            stream_result["data"].get("thumbnail") or chosen.get("thumbnail")
+        )
 
     return stream_result
 
 
 # ---------------------------------------------------------------------------
-# Lightweight stubs / real implementations for other route-level APIs
+# Albums / Artists / Trending
 # ---------------------------------------------------------------------------
+
 
 def search_albums(query: str, page: int = 1, limit: int = 20) -> dict:
     if not _YT_AVAILABLE or ytmusic is None:
@@ -452,17 +354,19 @@ def search_albums(query: str, page: int = 1, limit: int = 20) -> dict:
     try:
         raw = ytmusic.search(query, filter="albums", limit=limit) or []
         start = max(0, (page - 1) * limit)
-        data = []
-        for r in raw[start: start + limit]:
-            data.append({
-                "id": r.get("browseId"),
-                "title": r.get("title"),
-                "artist": _safe_first(r.get("artists")),
-                "thumbnail": _best_thumbnail(r.get("thumbnails")),
-            })
-        return {"success": True, "data": data}
-    except Exception as e:
-        logger.warning(f"search_albums failed: {e}")
+        return {
+            "success": True,
+            "data": [
+                {
+                    "id": r.get("browseId"),
+                    "title": r.get("title"),
+                    "artist": _safe_first(r.get("artists")),
+                    "thumbnail": _best_thumbnail(r.get("thumbnails")),
+                }
+                for r in raw[start : start + limit]
+            ],
+        }
+    except Exception:
         return {"success": True, "data": []}
 
 
@@ -472,16 +376,18 @@ def search_artists(query: str, page: int = 1, limit: int = 20) -> dict:
     try:
         raw = ytmusic.search(query, filter="artists", limit=limit) or []
         start = max(0, (page - 1) * limit)
-        data = []
-        for r in raw[start: start + limit]:
-            data.append({
-                "id": r.get("browseId"),
-                "name": r.get("artist"),
-                "thumbnail": _best_thumbnail(r.get("thumbnails")),
-            })
-        return {"success": True, "data": data}
-    except Exception as e:
-        logger.warning(f"search_artists failed: {e}")
+        return {
+            "success": True,
+            "data": [
+                {
+                    "id": r.get("browseId"),
+                    "name": r.get("artist"),
+                    "thumbnail": _best_thumbnail(r.get("thumbnails")),
+                }
+                for r in raw[start : start + limit]
+            ],
+        }
+    except Exception:
         return {"success": True, "data": []}
 
 
@@ -490,7 +396,6 @@ def get_album_by_id(album_id: str) -> dict:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
         album = ytmusic.get_album(album_id)
-        tracks = [_normalize_song(t) for t in (album.get("tracks") or [])]
         return {
             "success": True,
             "data": {
@@ -498,7 +403,9 @@ def get_album_by_id(album_id: str) -> dict:
                 "title": album.get("title"),
                 "artist": _safe_first(album.get("artists")),
                 "thumbnail": _best_thumbnail(album.get("thumbnails")),
-                "tracks": tracks,
+                "tracks": [
+                    _normalize_song(t) for t in (album.get("tracks") or [])
+                ],
             },
         }
     except Exception as e:
@@ -510,15 +417,18 @@ def get_artist_by_id(artist_id: str) -> dict:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
         artist = ytmusic.get_artist(artist_id)
-        songs_data = artist.get("songs", {})
-        songs = [_normalize_song(s) for s in (songs_data.get("results") or [])]
         return {
             "success": True,
             "data": {
                 "id": artist_id,
                 "name": artist.get("name"),
                 "thumbnail": _best_thumbnail(artist.get("thumbnails")),
-                "songs": songs,
+                "songs": [
+                    _normalize_song(s)
+                    for s in (
+                        artist.get("songs", {}).get("results") or []
+                    )
+                ],
             },
         }
     except Exception as e:
@@ -526,69 +436,66 @@ def get_artist_by_id(artist_id: str) -> dict:
 
 
 def get_trending() -> dict:
-    """Return a list of currently popular songs from YouTube Music."""
     if not _YT_AVAILABLE or ytmusic is None:
         return {"success": True, "data": []}
     try:
-        # Try charts endpoint first
         try:
             charts = ytmusic.get_charts(country="US")
-            trending_items = []
-            # get_charts returns different structures depending on ytmusicapi version
             if isinstance(charts, dict):
                 for key in ("songs", "trending", "videos"):
                     section = charts.get(key)
+                    items = []
                     if isinstance(section, dict):
-                        trending_items = section.get("items") or []
+                        items = section.get("items") or []
                     elif isinstance(section, list):
-                        trending_items = section
-                    if trending_items:
-                        break
+                        items = section
+                    if items:
+                        songs = [_normalize_song(i) for i in items[:20]]
+                        songs = [s for s in songs if s.get("id")]
+                        if songs:
+                            return {"success": True, "data": songs}
+        except Exception:
+            pass
 
-            if trending_items:
-                songs = [_normalize_song(item) for item in trending_items[:20]]
-                songs = [s for s in songs if s.get("id")]
-                if songs:
-                    return {"success": True, "data": songs}
-        except Exception as e:
-            logger.warning(f"get_charts failed: {e}")
-
-        # Fallback: search for popular music
         raw = ytmusic.search("top hits 2024", filter="songs", limit=20) or []
         songs = [_normalize_song(r) for r in raw[:20]]
-        songs = [s for s in songs if s.get("id")]
-        return {"success": True, "data": songs}
+        return {"success": True, "data": [s for s in songs if s.get("id")]}
 
     except Exception as e:
-        logger.warning(f"get_trending failed: {e}")
         return {"success": False, "message": str(e)}
 
 
 # ---------------------------------------------------------------------------
-# Health check (useful for debugging deployment)
+# Health check endpoint
 # ---------------------------------------------------------------------------
 
+
 def health_check() -> dict:
-    """Return system status for debugging."""
+    """Diagnose what's working on this deployment."""
     status = {
-        "ytmusicapi_installed": YTMusic is not None,
+        "ytmusicapi_available": _YT_AVAILABLE,
         "ytmusicapi_initialized": ytmusic is not None,
-        "ytdlp_installed": _YTDLP_AVAILABLE,
+        "stream_proxies": [p["name"] for p in _STREAM_PROXIES],
     }
 
-    if _YTDLP_AVAILABLE and yt_dlp:
-        try:
-            status["ytdlp_version"] = yt_dlp.version.__version__
-        except Exception:
-            status["ytdlp_version"] = "unknown"
-
-    # Quick smoke test
     if ytmusic:
         try:
             r = ytmusic.search("hello", filter="songs", limit=1)
-            status["ytmusic_search_works"] = bool(r and len(r) > 0)
+            status["search_works"] = bool(r and len(r) > 0)
         except Exception as e:
-            status["ytmusic_search_works"] = False
-            status["ytmusic_search_error"] = str(e)
+            status["search_works"] = False
+            status["search_error"] = str(e)
+
+    # Test first stream proxy
+    try:
+        test_result = _resolve_stream_url("dQw4w9WgXcQ")  # Rick Astley
+        status["stream_works"] = bool(
+            test_result and test_result.get("stream_url")
+        )
+        if test_result:
+            status["stream_proxy_used"] = test_result.get("proxy")
+    except Exception as e:
+        status["stream_works"] = False
+        status["stream_error"] = str(e)
 
     return {"success": True, "data": status}
