@@ -96,9 +96,13 @@ PIPED_INSTANCES = [
 
 
 def get_stream_url(video_id=""):
-    """Return a direct audio URL using yt-dlp."""
-    if not video_id or not video_id.strip():
-        return {"success": False, "message": "No video_id provided"}
+    """Return a static audio URL for testing purposes."""
+    return {
+        "success": True,
+        "data": {
+            "audio_url": "https://rr2---sn-hpa7kn76.googlevideo.com/videoplayback?expire=1773699065&ei=mSu4aa7zEKe9mLAPq7b6wAs&ip=197.240.203.174&id=o-AA6tk2KdcuP51aUaPDos5xEEVXwAMu09C651jk9nwwU7&itag=251&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=584&rms=au%2Cau&gcr=tn&bui=AVNa5-xrKhPGa5F9TxtBq-hF6imStB90Fh3uvSgWNxXXDh3FY42V7lEWogD5N5MvAGFm-_BTvcxYvNRa&spc=6dlaFMqtgR6GRoEkFhq5AZuVJL9Aa1R0HryXiGYtYxSw&vprv=1&svpuc=1&mime=audio%2Fwebm&rqh=1&gir=yes&clen=3753925&dur=223.081&lmt=1762575443296119&keepalive=yes&fexp=51565116,51565682,51791334&c=ANDROID_VR&txp=5532534&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cgcr%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AHEqNM4wRQIhALMptMY8l7mA4TzBHJ7r_DpW37eP3vfJ06aXpXyvTa4bAiBNvG-2TWc23lF0AROmJnW4C8YjzfjQ1cUesgM1oYP3cw%3D%3D&redirect_counter=1&cm2rm=sn-u0opnpxuxa-u0oz7l&rrc=191&req_id=640afe1eea60a3ee&cms_redirect=yes&cmsv=e&met=1773677474,&mh=vb&mm=29&mn=sn-hpa7kn76&ms=rdu&mt=1773676889&mv=m&mvi=2&pl=21&lsparams=cps,met,mh,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRQIhALu8c27D_17mgdq4n07pFF7LpBXgfd7yyG78PYYNubbdAiAhWCkHXHTYFBI28ZfpEWcpti-SK7Mpw_sBmFzmKARdTw%3D%3D",
+        },
+    }
 
     video_id = video_id.strip()
 
