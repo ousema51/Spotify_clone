@@ -15,10 +15,10 @@ class MusicService {
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
     final result = await _api.get(
-        '/music/search?q=${Uri.encodeComponent(query)}&type=songs');
+      '/music/search?q=${Uri.encodeComponent(query)}&type=songs',
+    );
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items =
-          result['data'] is List ? result['data'] : [];
+      final List<dynamic> items = result['data'] is List ? result['data'] : [];
       return items
           .map((e) => Song.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -28,10 +28,10 @@ class MusicService {
 
   Future<List<Album>> searchAlbums(String query) async {
     final result = await _api.get(
-        '/music/search?q=${Uri.encodeComponent(query)}&type=albums');
+      '/music/search?q=${Uri.encodeComponent(query)}&type=albums',
+    );
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items =
-          result['data'] is List ? result['data'] : [];
+      final List<dynamic> items = result['data'] is List ? result['data'] : [];
       return items
           .map((e) => Album.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -41,10 +41,10 @@ class MusicService {
 
   Future<List<Artist>> searchArtists(String query) async {
     final result = await _api.get(
-        '/music/search?q=${Uri.encodeComponent(query)}&type=artists');
+      '/music/search?q=${Uri.encodeComponent(query)}&type=artists',
+    );
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items =
-          result['data'] is List ? result['data'] : [];
+      final List<dynamic> items = result['data'] is List ? result['data'] : [];
       return items
           .map((e) => Artist.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -57,7 +57,21 @@ class MusicService {
     try {
       final res = await _api.get('/music/stream/$songId');
       if (res['success'] == true && res['data'] != null) {
-        return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+        final data = res['data'];
+        final videoId = data['video_id']?.toString();
+        final pipedInstances = data['piped_instances'] as List?;
+        final resolveOnClient = data['resolve_on_client'] == true;
+
+        if (videoId != null &&
+            resolveOnClient &&
+            pipedInstances != null &&
+            pipedInstances.isNotEmpty) {
+          final instance = pipedInstances.first.toString().replaceAll(
+            RegExp(r'\/$'),
+            '',
+          );
+          return '$instance/streams/$videoId';
+        }
       }
     } catch (e) {
       print('Error fetching stream URL: $e');
@@ -66,8 +80,7 @@ class MusicService {
     return _player.resolveStreamUrl(songId);
   }
 
-  Future<String?> getStreamUrlWithHint(
-      String songId, String? titleHint) async {
+  Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
     try {
       final q = titleHint != null && titleHint.isNotEmpty
           ? '?q=${Uri.encodeComponent(titleHint)}'
@@ -75,17 +88,18 @@ class MusicService {
       final res = await _api.get('/music/stream/$songId$q');
       if (res['success'] == true && res['data'] != null) {
         final data = res['data'];
-        // Explicit stream URL from backend
-        final explicit = (data['stream_url'] ?? data['streamUrl'])?.toString();
-        if (explicit != null && explicit.isNotEmpty) return explicit;
+        final videoId = data['video_id']?.toString();
+        final pipedInstances = data['piped_instances'] as List?;
+        final resolveOnClient = data['resolve_on_client'] == true;
 
-        // Backend asks client to resolve via Piped instances
-        final videoId = (data['video_id'] ?? data['videoId'])?.toString();
-        final piped = data['piped_instances'] ?? data['pipedInstances'];
-        final resolveOnClient = data['resolve_on_client'] ?? data['resolveOnClient'];
-        if (videoId != null && resolveOnClient == true && piped is List && piped.isNotEmpty) {
-          // Use first piped instance to form a streams URL the client can fetch
-          final instance = piped.first.toString().replaceAll(RegExp(r'\/$'), '');
+        if (videoId != null &&
+            resolveOnClient &&
+            pipedInstances != null &&
+            pipedInstances.isNotEmpty) {
+          final instance = pipedInstances.first.toString().replaceAll(
+            RegExp(r'\/$'),
+            '',
+          );
           return '$instance/streams/$videoId';
         }
       }
@@ -126,8 +140,9 @@ class MusicService {
     final result = await _api.get('/music/trending');
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
-      final List<dynamic> items =
-          data is List ? data : (data['songs'] ?? data['trending'] ?? []);
+      final List<dynamic> items = data is List
+          ? data
+          : (data['songs'] ?? data['trending'] ?? []);
       return items
           .map((e) => Song.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -137,7 +152,9 @@ class MusicService {
 
   // --- Library ---
   Future<Map<String, dynamic>> likeSong(
-      String songId, Map<String, dynamic> metadata) async {
+    String songId,
+    Map<String, dynamic> metadata,
+  ) async {
     return _api.post('/library/like/$songId', metadata);
   }
 
@@ -163,10 +180,11 @@ class MusicService {
 
   // --- History / Suggestions ---
   Future<Map<String, dynamic>> trackListen(
-      String songId,
-      Map<String, dynamic> metadata,
-      int listenedSeconds,
-      int totalDuration) async {
+    String songId,
+    Map<String, dynamic> metadata,
+    int listenedSeconds,
+    int totalDuration,
+  ) async {
     return _api.post('/listen/track', {
       'song_id': songId,
       'metadata': metadata,
