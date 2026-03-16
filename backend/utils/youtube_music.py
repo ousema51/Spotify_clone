@@ -26,7 +26,12 @@ def _get_thumbnail(r):
     if isinstance(thumbs, list) and thumbs:
         url = thumbs[-1].get("url")
         if url:
-            return url
+            # ensure url is absolute and uses https
+            if isinstance(url, str) and url.startswith("//"):
+                return f"https:{url}"
+            if isinstance(url, str) and url.startswith("http"):
+                return url
+            return f"https:{url}"
 
     thumb_obj = r.get("thumbnail")
     if isinstance(thumb_obj, dict):
@@ -226,8 +231,11 @@ def get_trending():
     if not ytmusic:
         return {"success": True, "data": []}
     try:
-        raw = ytmusic.search("top hits 2024", filter="songs", limit=20) or []
-        return {"success": True, "data": [_normalize(r) for r in raw if r.get("videoId")]}
+        # Prefer US-focused trending results
+        raw = ytmusic.search("top hits USA", filter="songs", limit=40) or []
+        songs = [r for r in raw if r.get("videoId")]
+        # normalize and return up to 20
+        return {"success": True, "data": [_normalize(r) for r in songs[:20]]}
     except Exception:
         return {"success": True, "data": []}
 
