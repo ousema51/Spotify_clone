@@ -3,6 +3,7 @@ YouTube Music backend — search via ytmusicapi, streams via client-side Piped.
 """
 
 import logging
+import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -95,20 +96,34 @@ PIPED_INSTANCES = [
 
 
 def get_stream_url(video_id=""):
-    """Return Piped API URL for the frontend to call directly."""
+    """Return a direct audio URL using yt-dlp."""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
 
-    return {
-        "success": True,
-        "data": {
-            "video_id": video_id,
-            "piped_instances": PIPED_INSTANCES,
-            "resolve_on_client": True,
-        },
-    }
+    try:
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'noplaylist': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            audio_url = info.get('url')
+
+        if not audio_url:
+            return {"success": False, "message": "Failed to extract audio URL"}
+
+        return {
+            "success": True,
+            "data": {
+                "audio_url": audio_url,
+            },
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
 
 
 def get_song_by_id(video_id=""):
