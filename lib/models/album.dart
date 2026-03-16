@@ -38,7 +38,7 @@ class Album {
     }
 
     String? coverUrl;
-    final rawImage = json['image'] ?? json['cover_url'] ?? json['coverUrl'];
+    final rawImage = json['image'] ?? json['thumbnail'] ?? json['cover_url'] ?? json['coverUrl'];
     if (rawImage is String) {
       coverUrl = rawImage;
     } else if (rawImage is List && rawImage.isNotEmpty) {

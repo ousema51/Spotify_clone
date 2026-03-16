@@ -39,7 +39,7 @@ class Artist {
     }
 
     String? imageUrl;
-    final rawImage = json['image'] ?? json['image_url'] ?? json['imageUrl'];
+    final rawImage = json['image'] ?? json['thumbnail'] ?? json['image_url'] ?? json['imageUrl'];
     if (rawImage is String) {
       imageUrl = rawImage;
     } else if (rawImage is List && rawImage.isNotEmpty) {

@@ -171,6 +171,8 @@ def search_albums(query="", page=1, limit=20):
                 "title": r.get("title"),
                 "artist": (r.get("artists") or [{}])[0].get("name"),
                 "thumbnail": _get_thumbnail(r),
+                "cover_url": _get_thumbnail(r),
+                "image": _get_thumbnail(r),
             }
             for r in raw[start:start + limit]
         ]}
@@ -206,6 +208,8 @@ def get_album_by_id(album_id=""):
             "title": album.get("title"),
             "artist": (album.get("artists") or [{}])[0].get("name"),
             "thumbnail": _get_thumbnail(album),
+            "cover_url": _get_thumbnail(album),
+            "image": _get_thumbnail(album),
             "tracks": [_normalize(t) for t in (album.get("tracks") or [])],
         }}
     except Exception as e:
@@ -221,6 +225,8 @@ def get_artist_by_id(artist_id=""):
             "id": artist_id,
             "name": artist.get("name"),
             "thumbnail": _get_thumbnail(artist),
+            "image": _get_thumbnail(artist),
+            "image_url": _get_thumbnail(artist),
             "songs": [_normalize(s) for s in (artist.get("songs", {}).get("results") or [])],
         }}
     except Exception as e:
