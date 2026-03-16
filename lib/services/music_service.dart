@@ -71,7 +71,20 @@ class MusicService {
         : '';
     final res = await _api.get('/music/stream/$songId$q');
     if (res['success'] == true && res['data'] != null) {
-      return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+      final data = res['data'];
+      // Explicit stream URL from backend
+      final explicit = (data['stream_url'] ?? data['streamUrl'])?.toString();
+      if (explicit != null && explicit.isNotEmpty) return explicit;
+
+      // Backend asks client to resolve via Piped instances
+      final videoId = (data['video_id'] ?? data['videoId'])?.toString();
+      final piped = data['piped_instances'] ?? data['pipedInstances'];
+      final resolveOnClient = data['resolve_on_client'] ?? data['resolveOnClient'];
+      if (videoId != null && resolveOnClient == true && piped is List && piped.isNotEmpty) {
+        // Use first piped instance to form a streams URL the client can fetch
+        final instance = piped.first.toString().replaceAll(RegExp(r'\/$'), '');
+        return '$instance/streams/$videoId';
+      }
     }
     // Fallback to device resolver
     return _player.resolveStreamUrl(songId);

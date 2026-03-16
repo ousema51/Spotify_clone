@@ -118,8 +118,8 @@ def get_song_by_id(video_id=""):
     video_id = video_id.strip()
 
     meta = {
-        "title": None,
-        "artist": None,
+        "title": f"Video {video_id}",
+        "artist": "Unknown Artist",
         "duration": None,
         "thumbnail": "https://img.youtube.com/vi/{}/hqdefault.jpg".format(video_id),
     }
@@ -129,11 +129,16 @@ def get_song_by_id(video_id=""):
             info = ytmusic.get_song(video_id)
             vd = info.get("videoDetails") or {}
             thumbs = vd.get("thumbnail", {}).get("thumbnails") or []
-            meta["title"] = vd.get("title")
-            meta["artist"] = vd.get("author")
-            meta["duration"] = vd.get("lengthSeconds")
+            meta["title"] = vd.get("title") or meta["title"]
+            meta["artist"] = vd.get("author") or meta["artist"]
+            meta["duration"] = vd.get("lengthSeconds") or meta["duration"]
             if thumbs:
-                meta["thumbnail"] = thumbs[-1].get("url")
+                turl = thumbs[-1].get("url")
+                if turl:
+                    if isinstance(turl, str) and turl.startswith("//"):
+                        meta["thumbnail"] = f"https:{turl}"
+                    else:
+                        meta["thumbnail"] = turl
         except Exception:
             pass
 

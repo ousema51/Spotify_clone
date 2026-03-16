@@ -35,7 +35,12 @@ class _MainScreenState extends State<MainScreen> {
     // Refresh metadata (thumbnail, duration) from backend when available
     try {
       final fresh = await MusicService().getSong(song.id);
-      if (fresh != null && mounted) setState(() => _currentSong = fresh);
+      if (fresh != null && mounted) {
+        final t = (fresh.title ?? '').trim();
+        if (t.isNotEmpty && t.toLowerCase() != 'unknown') {
+          setState(() => _currentSong = fresh);
+        }
+      }
     } catch (_) {}
 
     // Try to obtain backend-resolved stream URL first
