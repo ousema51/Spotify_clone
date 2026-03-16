@@ -58,20 +58,8 @@ class MusicService {
       final res = await _api.get('/music/stream/$songId');
       if (res['success'] == true && res['data'] != null) {
         final data = res['data'];
-        final videoId = data['video_id']?.toString();
-        final pipedInstances = data['piped_instances'] as List?;
-        final resolveOnClient = data['resolve_on_client'] == true;
-
-        if (videoId != null &&
-            resolveOnClient &&
-            pipedInstances != null &&
-            pipedInstances.isNotEmpty) {
-          final instance = pipedInstances.first.toString().replaceAll(
-            RegExp(r'\/$'),
-            '',
-          );
-          return '$instance/streams/$videoId';
-        }
+        final audioUrl = data['audio_url']?.toString();
+        if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
       }
     } catch (e) {
       print('Error fetching stream URL: $e');
@@ -88,20 +76,8 @@ class MusicService {
       final res = await _api.get('/music/stream/$songId$q');
       if (res['success'] == true && res['data'] != null) {
         final data = res['data'];
-        final videoId = data['video_id']?.toString();
-        final pipedInstances = data['piped_instances'] as List?;
-        final resolveOnClient = data['resolve_on_client'] == true;
-
-        if (videoId != null &&
-            resolveOnClient &&
-            pipedInstances != null &&
-            pipedInstances.isNotEmpty) {
-          final instance = pipedInstances.first.toString().replaceAll(
-            RegExp(r'\/$'),
-            '',
-          );
-          return '$instance/streams/$videoId';
-        }
+        final audioUrl = data['audio_url']?.toString();
+        if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
       }
     } catch (e) {
       print('Error fetching stream URL with hint: $e');

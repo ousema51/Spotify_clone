@@ -1,5 +1,6 @@
 import 'package:just_audio/just_audio.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import '../models/song.dart';
 
 class PlayerService {
   static final PlayerService _instance = PlayerService._internal();
@@ -48,13 +49,10 @@ class PlayerService {
     }
   }
 
-  /// Play a YouTube video by ID — resolves stream on device
-  Future<bool> playYoutubeVideo(String videoId) async {
-    final url = await resolveStreamUrl(videoId);
-    if (url == null) {
-      print('[PlayerService] could not resolve stream for $videoId');
-      return false;
-    }
+  /// Play a song using its streamUrl
+  Future<bool> playSong(Song song) async {
+    final url = song.streamUrl;
+    if (url == null || url.isEmpty) return false;
     return playUrl(url);
   }
 

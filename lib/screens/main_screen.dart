@@ -45,7 +45,10 @@ class _MainScreenState extends State<MainScreen> {
 
     // Try to obtain backend-resolved stream URL first
     try {
-      final url = await MusicService().getStreamUrlWithHint(song.id, song.title);
+      final url = await MusicService().getStreamUrlWithHint(
+        song.id,
+        song.title,
+      );
       bool played = false;
       if (url != null && url.isNotEmpty) {
         played = await _player.playUrl(url);
@@ -53,7 +56,7 @@ class _MainScreenState extends State<MainScreen> {
 
       // Fallback: resolve on device if backend failed
       if (!played) {
-        played = await _player.playYoutubeVideo(song.id);
+        played = await _player.playSong(song);
       }
 
       if (!played && mounted) {
@@ -109,8 +112,10 @@ class _MainScreenState extends State<MainScreen> {
                       builder: (context, snapshot) {
                         if (snapshot.data == true) {
                           return IconButton(
-                            icon: const Icon(Icons.logout_rounded,
-                                color: Colors.white),
+                            icon: const Icon(
+                              Icons.logout_rounded,
+                              color: Colors.white,
+                            ),
                             tooltip: 'Logout',
                             onPressed: _logout,
                           );
@@ -118,8 +123,10 @@ class _MainScreenState extends State<MainScreen> {
                         return TextButton(
                           onPressed: () =>
                               Navigator.pushNamed(context, '/login'),
-                            child: const Text('Log In',
-                              style: TextStyle(color: Color(0xFF0B3B8C))),
+                          child: const Text(
+                            'Log In',
+                            style: TextStyle(color: Color(0xFF0B3B8C)),
+                          ),
                         );
                       },
                     ),
@@ -129,10 +136,7 @@ class _MainScreenState extends State<MainScreen> {
           body: Column(
             children: [
               Expanded(child: pages[_selectedIndex]),
-              MiniPlayer(
-                onTap: _toggleFullPlayer,
-                currentSong: _currentSong,
-              ),
+              MiniPlayer(onTap: _toggleFullPlayer, currentSong: _currentSong),
             ],
           ),
           bottomNavigationBar: BottomNavigationBar(

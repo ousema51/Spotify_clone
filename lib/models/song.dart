@@ -28,9 +28,15 @@ class Song {
       artist: _parsePrimaryArtist(json['artists'] ?? json['artist']),
       artists: _parseAllArtists(json['artists'] ?? json['artist']),
       albumName: _parseAlbumName(json['album']),
-      coverUrl: _getBestImage(json['thumbnail'] ?? json['image'] ?? json['cover_url'] ?? json['coverUrl']),
+      coverUrl: _getBestImage(
+        json['thumbnail'] ??
+            json['image'] ??
+            json['cover_url'] ??
+            json['coverUrl'],
+      ),
       duration: _parseDuration(json['duration']),
-      streamUrl: (json['stream_url'] ?? json['streamUrl'])?.toString(),
+      streamUrl: (json['stream_url'] ?? json['streamUrl'] ?? json['audio_url'])
+          ?.toString(),
       albumId: _parseAlbumId(json['album']),
     );
   }

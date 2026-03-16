@@ -54,7 +54,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
       _isPlaying = false;
       _checkLiked();
       if (widget.currentSong != null) {
-        _player.playYoutubeVideo(widget.currentSong!.id).then((success) {
+        _player.playSong(widget.currentSong!).then((success) {
           if (!success && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
