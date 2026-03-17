@@ -96,7 +96,7 @@ PIPED_INSTANCES = [
 
 
 def get_stream_url(video_id=""):
-    """Return a direct audio URL using yt-dlp."""
+    """Return a direct audio URL using yt-dlp (anti-bot fixed)."""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
@@ -104,13 +104,45 @@ def get_stream_url(video_id=""):
 
     try:
         ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
+            "format": "bestaudio[ext=m4a]/bestaudio/best",
+            "quiet": True,
+            "noplaylist": True,
+
+            # 🔥 CRITICAL FIXES
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"],  # bypass bot checks
+                }
+            },
+
+            # Pretend to be a real browser
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+
+            # Avoid extra requests
+            "skip_download": True,
         }
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            url = f"https://www.youtube.com/watch?v={video_id}"
+            url = f"https://music.youtube.com/watch?v={video_id}"  # 🔥 important
             info = ydl.extract_info(url, download=False)
-            audio_url = info["url"]
+
+            # safer extraction
+            audio_url = None
+
+            if "url" in info:
+                audio_url = info["url"]
+            elif "formats" in info:
+                formats = info["formats"]
+                # pick best audio manually
+                best_audio = next(
+                    (f for f in formats if f.get("acodec") != "none"),
+                    None
+                )
+                if best_audio:
+                    audio_url = best_audio.get("url")
 
         if not audio_url:
             return {"success": False, "message": "Failed to extract audio URL"}
