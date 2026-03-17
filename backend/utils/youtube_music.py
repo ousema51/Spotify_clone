@@ -106,10 +106,10 @@ def get_stream_url(video_id=""):
         ydl_opts = {
             'format': 'bestaudio/best',
             'quiet': True,
-            'noplaylist': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            info = ydl.extract_info(url, download=False)
             audio_url = info["url"]
 
         if not audio_url:
