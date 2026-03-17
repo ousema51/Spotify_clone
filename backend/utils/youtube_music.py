@@ -95,67 +95,64 @@ PIPED_INSTANCES = [
 ]
 
 
+import os
+import uuid
+
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
 def get_stream_url(video_id=""):
-    """Return a direct audio URL using yt-dlp (anti-bot fixed)."""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
-    video_id = video_id.strip()
-
     try:
+        file_id = str(uuid.uuid4())
+        output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
+
         ydl_opts = {
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
+            "format": "bestaudio/best",
+            "outtmpl": output_path,
             "quiet": True,
             "noplaylist": True,
 
-            # 🔥 CRITICAL FIXES
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web"],  # bypass bot checks
+                    "player_client": ["android", "web"],
                 }
             },
 
-            # Pretend to be a real browser
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": "Mozilla/5.0",
             },
 
-            # Avoid extra requests
-            "skip_download": True,
+            # Convert to mp3 (optional)
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
         }
+
+        url = f"https://music.youtube.com/watch?v={video_id}"
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            url = f"https://youtube.com/watch?v={video_id}"  # 🔥 important
-            info = ydl.extract_info(url, download=False)
+            ydl.download([url])
 
-            # safer extraction
-            audio_url = None
+        # find the actual file
+        for file in os.listdir(DOWNLOAD_DIR):
+            if file.startswith(file_id):
+                file_url = f"http://localhost:5000/audio/{file}"
+                return {
+                    "success": True,
+                    "data": {
+                        "audio_url": file_url
+                    }
+                }
 
-            if "url" in info:
-                audio_url = info["url"]
-            elif "formats" in info:
-                formats = info["formats"]
-                # pick best audio manually
-                best_audio = next(
-                    (f for f in formats if f.get("acodec") != "none"),
-                    None
-                )
-                if best_audio:
-                    audio_url = best_audio.get("url")
-
-        if not audio_url:
-            return {"success": False, "message": "Failed to extract audio URL"}
-
-        return {
-            "success": True,
-            "data": {
-                "audio_url": audio_url,
-            },
-        }
+        return {"success": False, "message": "File not found after download"}
 
     except Exception as e:
-        return {"success": False, "message": f"Error: {str(e)}"}
+        return {"success": False, "message": str(e)}
 
 
 def get_song_by_id(video_id=""):
