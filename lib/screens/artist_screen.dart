@@ -5,16 +5,17 @@ import '../models/song.dart';
 import '../services/music_service.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/album_card.dart';
-import 'album_screen.dart';
 
 class ArtistScreen extends StatefulWidget {
   final String artistId;
-  final Function(Song) onSongSelected;
+  final void Function(Song, [List<Song>?]) onSongSelected;
+  final ValueChanged<String> onAlbumSelected;
 
   const ArtistScreen({
     super.key,
     required this.artistId,
     required this.onSongSelected,
+    required this.onAlbumSelected,
   });
 
   @override
@@ -186,7 +187,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                         child: Padding(
                           padding: EdgeInsets.fromLTRB(16, 8, 16, 12),
                           child: Text(
-                            'Top Songs',
+                            'Most Played Songs',
                             style: TextStyle(
                                 fontSize: 20, fontWeight: FontWeight.bold),
                           ),
@@ -202,8 +203,10 @@ class _ArtistScreenState extends State<ArtistScreen> {
                               child: SongTile(
                                 song: song,
                                 onTap: () {
-                                  widget.onSongSelected(song);
-                                  Navigator.pop(context);
+                                  widget.onSongSelected(
+                                    song,
+                                    _artist!.topSongs,
+                                  );
                                 },
                               ),
                             );
@@ -236,15 +239,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                               final album = _artist!.topAlbums![index];
                               return AlbumCard(
                                 album: album,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => AlbumScreen(
-                                      albumId: album.id,
-                                      onSongSelected: widget.onSongSelected,
-                                    ),
-                                  ),
-                                ),
+                                onTap: () => widget.onAlbumSelected(album.id),
                               );
                             },
                           ),

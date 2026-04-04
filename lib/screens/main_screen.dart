@@ -13,8 +13,11 @@ import 'search_screen.dart';
 import 'library_screen.dart';
 import 'liked_songs_screen.dart';
 import 'playlist_detail_screen.dart';
+import 'artist_screen.dart';
+import 'album_screen.dart';
 
 enum LibraryView { library, likedSongs, playlist }
+enum BrowseView { none, artist, album }
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -40,6 +43,9 @@ class _MainScreenState extends State<MainScreen> {
   LibraryView _libraryView = LibraryView.library;
   String? _activePlaylistId;
   int _libraryRefreshKey = 0;
+  BrowseView _browseView = BrowseView.none;
+  String? _activeArtistId;
+  String? _activeAlbumId;
 
   @override
   void initState() {
@@ -76,6 +82,18 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() => _currentSong = song);
     _loadAndPlay(song);
+    _trackListen(song);
+  }
+
+  Future<void> _trackListen(Song song) async {
+    try {
+      await _musicService.trackListen(
+        song.id,
+        song.toMetadata(),
+        0,
+        song.duration ?? 0,
+      );
+    } catch (_) {}
   }
 
   Future<void> _loadAndPlay(Song song) async {
@@ -268,6 +286,51 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _openArtist(String artistId) {
+    setState(() {
+      _activeArtistId = artistId;
+      _browseView = BrowseView.artist;
+    });
+  }
+
+  void _openAlbum(String albumId) {
+    setState(() {
+      _activeAlbumId = albumId;
+      _browseView = BrowseView.album;
+    });
+  }
+
+  Future<void> _openArtistFromName(String? artistName) async {
+    final name = (artistName ?? '').trim();
+    if (name.isEmpty) return;
+
+    final artists = await _musicService.searchArtists(name);
+    if (artists.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Artist page not found'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isFullPlayer = false;
+      _activeArtistId = artists.first.id;
+      _browseView = BrowseView.artist;
+    });
+  }
+
+  void _closeBrowseView() {
+    setState(() {
+      _browseView = BrowseView.none;
+      _activeArtistId = null;
+      _activeAlbumId = null;
+    });
+  }
+
   Future<void> _logout() async {
     await _authService.logout();
     if (mounted) {
@@ -302,9 +365,32 @@ class _MainScreenState extends State<MainScreen> {
 
     final pages = [
       HomeScreen(onSongSelected: _onSongSelected),
-      SearchScreen(onSongSelected: _onSongSelected),
+      SearchScreen(
+        onSongSelected: _onSongSelected,
+        onArtistSelected: _openArtist,
+        onAlbumSelected: _openAlbum,
+      ),
       libraryContent,
     ];
+
+    Widget bodyContent = Expanded(child: pages[_selectedIndex]);
+
+    if (_browseView == BrowseView.artist && _activeArtistId != null) {
+      bodyContent = Expanded(
+        child: ArtistScreen(
+          artistId: _activeArtistId!,
+          onSongSelected: _onSongSelected,
+          onAlbumSelected: _openAlbum,
+        ),
+      );
+    } else if (_browseView == BrowseView.album && _activeAlbumId != null) {
+      bodyContent = Expanded(
+        child: AlbumScreen(
+          albumId: _activeAlbumId!,
+          onSongSelected: _onSongSelected,
+        ),
+      );
+    }
 
     return Stack(
       children: [
@@ -342,7 +428,7 @@ class _MainScreenState extends State<MainScreen> {
               : null,
           body: Column(
             children: [
-              Expanded(child: pages[_selectedIndex]),
+              bodyContent,
               MiniPlayer(onTap: _toggleFullPlayer, currentSong: _currentSong),
             ],
           ),
@@ -350,6 +436,9 @@ class _MainScreenState extends State<MainScreen> {
             currentIndex: _selectedIndex,
             onTap: (index) => setState(() {
               _selectedIndex = index;
+              _browseView = BrowseView.none;
+              _activeArtistId = null;
+              _activeAlbumId = null;
               if (index != 2) {
                 _libraryView = LibraryView.library;
                 _activePlaylistId = null;
@@ -387,6 +476,18 @@ class _MainScreenState extends State<MainScreen> {
             onCycleRepeatMode: _cycleRepeatMode,
             onNext: _playNextSong,
             onPrevious: _playPreviousSong,
+            onArtistTap: _openArtistFromName,
+          ),
+        if (_browseView != BrowseView.none)
+          Positioned(
+            top: 12,
+            left: 10,
+            child: SafeArea(
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                onPressed: _closeBrowseView,
+              ),
+            ),
           ),
       ],
     );

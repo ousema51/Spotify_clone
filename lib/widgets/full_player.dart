@@ -13,6 +13,7 @@ class FullPlayerScreen extends StatefulWidget {
   final VoidCallback onCycleRepeatMode;
   final Future<void> Function() onNext;
   final Future<void> Function() onPrevious;
+  final Future<void> Function(String?) onArtistTap;
 
   const FullPlayerScreen({
     super.key,
@@ -24,6 +25,7 @@ class FullPlayerScreen extends StatefulWidget {
     required this.onCycleRepeatMode,
     required this.onNext,
     required this.onPrevious,
+    required this.onArtistTap,
   });
 
   @override
@@ -325,15 +327,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              song?.artist ?? 'Unknown Artist',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey[400],
-                                letterSpacing: 0.2,
+                            InkWell(
+                              onTap: () => widget.onArtistTap(song?.artist),
+                              child: Text(
+                                song?.artist ?? 'Unknown Artist',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey[400],
+                                  letterSpacing: 0.2,
+                                  decoration: TextDecoration.underline,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),

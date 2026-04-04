@@ -38,18 +38,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _isLoggedIn = await _authService.isLoggedIn();
 
     if (_isLoggedIn) {
+      List<Song> likedSongs = [];
+      List<Map<String, dynamic>> playlists = [];
+
       try {
-        final likedSongs = await _musicService.getLikedSongs();
-        final playlists = await _musicService.getMyPlaylists();
-        if (mounted) {
-          setState(() {
-            _likedSongs = likedSongs;
-            _playlists = playlists;
-            _isLoading = false;
-          });
-        }
-      } catch (e) {
-        if (mounted) setState(() => _isLoading = false);
+        likedSongs = await _musicService.getLikedSongs();
+      } catch (_) {}
+
+      try {
+        playlists = await _musicService.getMyPlaylists();
+      } catch (_) {}
+
+      if (mounted) {
+        setState(() {
+          _likedSongs = likedSongs;
+          _playlists = playlists;
+          _isLoading = false;
+        });
       }
     } else {
       if (mounted) setState(() => _isLoading = false);

@@ -7,7 +7,7 @@ import '../widgets/song_tile.dart';
 
 class AlbumScreen extends StatefulWidget {
   final String albumId;
-  final Function(Song) onSongSelected;
+  final void Function(Song, [List<Song>?]) onSongSelected;
 
   const AlbumScreen({
     super.key,
@@ -157,8 +157,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                                       final songs =
                                           List<Song>.from(_album!.songs!);
                                       songs.shuffle();
-                                      widget.onSongSelected(songs.first);
-                                      Navigator.pop(context);
+                                      widget.onSongSelected(songs.first, songs);
                                     }
                                   : null,
                               icon: const Icon(Icons.shuffle_rounded),
@@ -187,8 +186,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                               child: SongTile(
                                 song: song,
                                 onTap: () {
-                                  widget.onSongSelected(song);
-                                  Navigator.pop(context);
+                                  widget.onSongSelected(song, _album!.songs);
                                 },
                               ),
                             );

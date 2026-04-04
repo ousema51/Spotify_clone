@@ -233,7 +233,8 @@ class MusicService {
   ) async {
     return _api.post('/listen/track', {
       'song_id': songId,
-      'metadata': metadata,
+      // Backend expects this key; using "metadata" is ignored server-side.
+      'song_metadata': metadata,
       'listened_seconds': listenedSeconds,
       'total_duration': totalDuration,
     });
@@ -242,7 +243,12 @@ class MusicService {
   Future<List<Song>> getRecentHistory() async {
     final result = await _api.get('/history/recent');
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
+      final data = result['data'];
+      final List<dynamic> items = data is List
+          ? data
+          : (data is Map<String, dynamic>
+                ? (data['songs'] as List<dynamic>? ?? [])
+                : []);
       return items.map((e) {
         final song = e['song'] ?? e;
         return Song.fromJson(song as Map<String, dynamic>);

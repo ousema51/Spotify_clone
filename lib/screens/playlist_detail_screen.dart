@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
 import '../services/offline_library_service.dart';
+import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class PlaylistDetailScreen extends StatefulWidget {
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   final MusicService _musicService = MusicService();
   final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final UserActivityService _activity = UserActivityService();
 
   Map<String, dynamic>? _playlist;
   List<Song> _songs = [];
@@ -526,7 +528,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               const EdgeInsets.symmetric(horizontal: 8),
                           title: SongTile(
                             song: song,
-                            onTap: () => widget.onSongSelected(song, _songs),
+                            onTap: () async {
+                              await _activity.recordPlaylistPlay(
+                                playlistId: widget.playlistId,
+                                playlistName:
+                                    (_playlist?['name'] ?? 'Playlist').toString(),
+                                coverUrl: song.coverUrl,
+                              );
+                              widget.onSongSelected(song, _songs);
+                            },
                           ),
                           trailing: PopupMenuButton<String>(
                             onSelected: (value) async {

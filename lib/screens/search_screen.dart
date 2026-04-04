@@ -4,12 +4,20 @@ import '../models/song.dart';
 import '../models/album.dart';
 import '../models/artist.dart';
 import '../services/music_service.dart';
+import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
 
 class SearchScreen extends StatefulWidget {
   final void Function(Song, [List<Song>?]) onSongSelected;
+  final ValueChanged<String> onArtistSelected;
+  final ValueChanged<String> onAlbumSelected;
 
-  const SearchScreen({super.key, required this.onSongSelected});
+  const SearchScreen({
+    super.key,
+    required this.onSongSelected,
+    required this.onArtistSelected,
+    required this.onAlbumSelected,
+  });
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -17,13 +25,14 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final MusicService _musicService = MusicService();
+  final UserActivityService _activityService = UserActivityService();
   Timer? _debounce;
 
   List<Song> _songResults = [];
-  // ignore: unused_field
+  List<Song> _recentSelectedSongs = [];
   List<Album> _albumResults = [];
-  // ignore: unused_field
   List<Artist> _artistResults = [];
   bool _isSearching = false;
   bool _hasSearched = false;
@@ -45,10 +54,40 @@ class _SearchScreenState extends State<SearchScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _loadRecentSelections();
+  }
+
+  Future<void> _loadRecentSelections() async {
+    final items = await _activityService.getRecentSearchSongs();
+    if (!mounted) return;
+    setState(() => _recentSelectedSongs = items);
+  }
+
+  @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _onSongSelectedFromSearch(Song song, List<Song> queue) async {
+    // Trigger playback/navigation immediately.
+    widget.onSongSelected(song, queue);
+
+    // Update local recent list optimistically.
+    if (mounted) {
+      setState(() {
+        _recentSelectedSongs.removeWhere((s) => s.id == song.id);
+        _recentSelectedSongs.insert(0, song);
+      });
+    }
+
+    // Persist and reload so the recent section reflects durable state.
+    await _activityService.recordSearchSongSelection(song);
+    await _loadRecentSelections();
   }
 
   Future<void> _search(String query) async {
@@ -65,10 +104,18 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => _isSearching = true);
 
     try {
-      final songs = await _musicService.searchSongs(query);
+      final songsFuture = _musicService.searchSongs(query);
+      final artistsFuture = _musicService.searchArtists(query);
+      final albumsFuture = _musicService.searchAlbums(query);
+
+      final songs = await songsFuture;
+      final artists = await artistsFuture;
+      final albums = await albumsFuture;
       if (mounted) {
         setState(() {
           _songResults = songs;
+          _artistResults = artists;
+          _albumResults = albums;
           _hasSearched = true;
           _isSearching = false;
         });
@@ -101,6 +148,7 @@ class _SearchScreenState extends State<SearchScreen> {
             const SizedBox(height: 20),
             TextField(
               controller: _searchController,
+              focusNode: _searchFocusNode,
               style: const TextStyle(color: Colors.white),
               onChanged: (value) {
                 // Update UI (clear button) immediately
@@ -127,6 +175,7 @@ class _SearchScreenState extends State<SearchScreen> {
                           _searchController.clear();
                           if (mounted) setState(() {});
                           _search('');
+                          _loadRecentSelections();
                         },
                       )
                     : null,
@@ -144,6 +193,9 @@ class _SearchScreenState extends State<SearchScreen> {
               const Center(
                 child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
               )
+            else if (_searchController.text.trim().isEmpty &&
+              _recentSelectedSongs.isNotEmpty)
+              Expanded(child: _buildRecentSelections())
             else if (_hasSearched)
               Expanded(child: _buildSearchResults())
             else
@@ -165,11 +217,60 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 8),
           ..._songResults.map((song) => SongTile(
                 song: song,
-                onTap: () => widget.onSongSelected(song, _songResults),
+                onTap: () =>
+                    _onSongSelectedFromSearch(song, _songResults),
               )),
           const SizedBox(height: 20),
         ],
-        if (_songResults.isEmpty)
+        if (_artistResults.isNotEmpty) ...[
+          const Text(
+            'Artists',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          ..._artistResults.map(
+            (artist) => ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF282828),
+                child: Icon(Icons.person_rounded, color: Colors.white70),
+              ),
+              title: Text(
+                artist.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: const Text('Artist'),
+              onTap: () => widget.onArtistSelected(artist.id),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        if (_albumResults.isNotEmpty) ...[
+          const Text(
+            'Albums',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          ..._albumResults.map(
+            (album) => ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF282828),
+                child: Icon(Icons.album_rounded, color: Colors.white70),
+              ),
+              title: Text(
+                album.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(album.artist ?? 'Album'),
+              onTap: () => widget.onAlbumSelected(album.id),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        if (_songResults.isEmpty &&
+            _artistResults.isEmpty &&
+            _albumResults.isEmpty)
           const Center(
             child: Padding(
               padding: EdgeInsets.symmetric(vertical: 40),
@@ -179,6 +280,24 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildRecentSelections() {
+    return ListView(
+      children: [
+        const Text(
+          'Recent Selections',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        ..._recentSelectedSongs.map(
+          (song) => SongTile(
+            song: song,
+            onTap: () => _onSongSelectedFromSearch(song, _recentSelectedSongs),
+          ),
+        ),
       ],
     );
   }

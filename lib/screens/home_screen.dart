@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,9 +16,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final MusicService _musicService = MusicService();
+  final UserActivityService _activityService = UserActivityService();
   List<Song> _trending = [];
-  List<Song> _recentHistory = [];
   List<Song> _suggestions = [];
+  List<Map<String, dynamic>> _recentPlaylists = [];
   bool _isLoading = true;
 
   @override
@@ -30,20 +32,17 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoading = true);
     try {
       final trending = await _musicService.getTrending();
-      List<Song> recent = [];
       List<Song> suggestions = [];
-      try {
-        recent = await _musicService.getRecentHistory();
-      } catch (_) {}
       try {
         suggestions = await _musicService.getSuggestions();
       } catch (_) {}
+      final recentPlaylists = await _activityService.getRecentPlaylists();
 
       if (mounted) {
         setState(() {
           _trending = trending;
-          _recentHistory = recent;
           _suggestions = suggestions;
+          _recentPlaylists = recentPlaylists;
           _isLoading = false;
         });
       }
@@ -90,6 +89,86 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 24),
 
+                  if (_recentPlaylists.isNotEmpty) ...[
+                    const Text(
+                      'Recently Played Playlists',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 90,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _recentPlaylists.length,
+                        itemBuilder: (context, index) {
+                          final item = _recentPlaylists[index];
+                          final name =
+                              (item['name'] ?? 'Playlist').toString();
+                          final cover = item['cover_url']?.toString();
+
+                          return Container(
+                            width: 190,
+                            margin: const EdgeInsets.only(right: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1F1F1F),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.all(8),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: SizedBox(
+                                    width: 56,
+                                    height: 56,
+                                    child: (cover != null && cover.isNotEmpty)
+                                        ? CachedNetworkImage(
+                                            imageUrl: cover,
+                                            fit: BoxFit.cover,
+                                            errorWidget:
+                                                (context, url, error) => Container(
+                                              color: const Color(0xFF282828),
+                                              child: const Icon(
+                                                Icons.queue_music_rounded,
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                          )
+                                        : Container(
+                                            color: const Color(0xFF282828),
+                                            child: const Icon(
+                                              Icons.queue_music_rounded,
+                                              color: Colors.white54,
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                  ],
+
                   if (_trending.isNotEmpty) ...[
                     const Text(
                       'Trending Now',
@@ -126,45 +205,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 30),
                   ],
 
-                  if (_recentHistory.isNotEmpty) ...[
-                    const Text(
-                      'Recently Played',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _recentHistory[0].title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          ..._recentHistory
-                              .skip(1)
-                              .map(
-                                (song) => SongTile(
-                                  song: song,
-                                  onTap: () => widget.onSongSelected(song, _recentHistory),
-                                ),
-                              ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 30),
-                  ],
-
                   if (_suggestions.isNotEmpty) ...[
                     const Text(
                       'Suggested For You',
@@ -184,7 +224,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
 
                   if (_trending.isEmpty &&
-                      _recentHistory.isEmpty &&
                       _suggestions.isEmpty)
                     Center(
                       child: Column(
@@ -230,17 +269,26 @@ class _TrendingCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(
-                width: 140,
-                height: 140,
-                child: song.coverUrl != null && song.coverUrl!.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl: song.coverUrl!,
-                        placeholder: (context, url) =>
-                            Container(color: Colors.grey[800]),
-                        errorWidget: (context, url, error) => Container(
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox.expand(
+                  child: song.coverUrl != null && song.coverUrl!.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: song.coverUrl!,
+                          placeholder: (context, url) =>
+                              Container(color: Colors.grey[800]),
+                          errorWidget: (context, url, error) => Container(
+                            color: const Color(0xFF282828),
+                            child: const Icon(
+                              Icons.music_note_rounded,
+                              color: Colors.white54,
+                              size: 40,
+                            ),
+                          ),
+                          fit: BoxFit.cover,
+                        )
+                      : Container(
                           color: const Color(0xFF282828),
                           child: const Icon(
                             Icons.music_note_rounded,
@@ -248,19 +296,10 @@ class _TrendingCard extends StatelessWidget {
                             size: 40,
                           ),
                         ),
-                        fit: BoxFit.cover,
-                      )
-                    : Container(
-                        color: const Color(0xFF282828),
-                        child: const Icon(
-                          Icons.music_note_rounded,
-                          color: Colors.white54,
-                          size: 40,
-                        ),
-                      ),
+                ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               song.title,
               maxLines: 1,
