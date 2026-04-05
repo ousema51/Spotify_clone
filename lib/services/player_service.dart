@@ -17,6 +17,14 @@ class PlayerService {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioCacheService _cache = AudioCacheService();
 
+  static const Map<String, String> _defaultStreamHeaders = {
+    'User-Agent':
+        'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
+    'Referer': 'https://music.youtube.com/',
+    'Origin': 'https://music.youtube.com',
+  };
+
   StreamSubscription<yt.YoutubePlayerValue>? _controllerStateSubscription;
   StreamSubscription<yt.YoutubeVideoState>? _videoStateSubscription;
   StreamSubscription<PlayerState>? _audioStateSubscription;
@@ -31,10 +39,15 @@ class PlayerService {
   // Listeners for UI updates
   final ValueNotifier<bool> _playingNotifier = ValueNotifier(false);
   final ValueNotifier<bool> _readyNotifier = ValueNotifier(false);
-  final ValueNotifier<yt.PlayerState> _playerStateNotifier =
-      ValueNotifier(yt.PlayerState.unknown);
-  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
-  final ValueNotifier<Duration> _durationNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<yt.PlayerState> _playerStateNotifier = ValueNotifier(
+    yt.PlayerState.unknown,
+  );
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(
+    Duration.zero,
+  );
+  final ValueNotifier<Duration> _durationNotifier = ValueNotifier(
+    Duration.zero,
+  );
 
   PlayerService._internal();
 
@@ -81,14 +94,16 @@ class PlayerService {
         _readyNotifier.value = _isReady;
       }
 
-      final bool isCurrentlyPlaying = state.playerState == yt.PlayerState.playing;
+      final bool isCurrentlyPlaying =
+          state.playerState == yt.PlayerState.playing;
       if (isCurrentlyPlaying != _isPlaying) {
         _isPlaying = isCurrentlyPlaying;
         _playingNotifier.value = _isPlaying;
       }
 
       final Duration metaDuration = state.metaData.duration;
-      if (metaDuration > Duration.zero && metaDuration != _durationNotifier.value) {
+      if (metaDuration > Duration.zero &&
+          metaDuration != _durationNotifier.value) {
         _durationNotifier.value = metaDuration;
       }
 
@@ -97,7 +112,9 @@ class PlayerService {
       }
     });
 
-    _videoStateSubscription = _controller!.videoStateStream.listen((videoState) {
+    _videoStateSubscription = _controller!.videoStateStream.listen((
+      videoState,
+    ) {
       _positionNotifier.value = videoState.position;
     });
   }
@@ -128,6 +145,21 @@ class PlayerService {
     });
   }
 
+  Map<String, String> _buildStreamHeaders(Map<String, String>? streamHeaders) {
+    final merged = <String, String>{..._defaultStreamHeaders};
+    if (streamHeaders == null) return merged;
+
+    streamHeaders.forEach((key, value) {
+      final k = key.trim();
+      final v = value.trim();
+      if (k.isNotEmpty && v.isNotEmpty) {
+        merged[k] = v;
+      }
+    });
+
+    return merged;
+  }
+
   Future<void> _stopCurrentEngine() async {
     if (_usingAudioEngine) {
       try {
@@ -143,7 +175,11 @@ class PlayerService {
   }
 
   /// Load a song and start playback using the same shared controller.
-  Future<void> loadSong(Song song, {String? streamUrl}) async {
+  Future<void> loadSong(
+    Song song, {
+    String? streamUrl,
+    Map<String, String>? streamHeaders,
+  }) async {
     _currentSong = song;
 
     _isReady = false;
@@ -175,10 +211,7 @@ class PlayerService {
         } else {
           final sourceId = Uri.file(cachedPath).toString();
           await _audioPlayer.setAudioSource(
-            AudioSource.file(
-              cachedPath,
-              tag: _buildMediaItem(song, sourceId),
-            ),
+            AudioSource.file(cachedPath, tag: _buildMediaItem(song, sourceId)),
           );
         }
         _isReady = true;
@@ -196,13 +229,15 @@ class PlayerService {
       try {
         _usingAudioEngine = true;
         _ensureAudioListeners();
+        final mergedHeaders = _buildStreamHeaders(streamHeaders);
         if (kIsWeb) {
-          await _audioPlayer.setUrl(streamUrl);
+          await _audioPlayer.setUrl(streamUrl, headers: mergedHeaders);
         } else {
           final uri = Uri.parse(streamUrl);
           await _audioPlayer.setAudioSource(
             AudioSource.uri(
               uri,
+              headers: mergedHeaders,
               tag: _buildMediaItem(song, uri.toString()),
             ),
           );
@@ -212,7 +247,13 @@ class PlayerService {
         _playerStateNotifier.value = yt.PlayerState.cued;
         await _audioPlayer.play();
         if (!kIsWeb) {
-          unawaited(_cache.cacheInBackground(song.id, streamUrl));
+          unawaited(
+            _cache.cacheInBackground(
+              song.id,
+              streamUrl,
+              headers: mergedHeaders,
+            ),
+          );
         }
         debugPrint('[PlayerService] Streaming audio for: ${song.title}');
         return;
@@ -320,10 +361,7 @@ class PlayerService {
       } else {
         if (_controller == null) return;
         final double targetSeconds = target.inMilliseconds / 1000.0;
-        await _controller!.seekTo(
-          seconds: targetSeconds,
-          allowSeekAhead: true,
-        );
+        await _controller!.seekTo(seconds: targetSeconds, allowSeekAhead: true);
       }
 
       _positionNotifier.value = target;
@@ -362,6 +400,7 @@ class PlayerService {
     _ensureController();
     return _controller;
   }
+
   Song? get currentSong => _currentSong;
   bool get isPlaying => _isPlaying;
   bool get isReady => _isReady;
@@ -376,5 +415,6 @@ class PlayerService {
   ValueNotifier<Duration> get durationNotifier => _durationNotifier;
 
   @override
-  String toString() => 'PlayerService(song: ${_currentSong?.title}, playing: $_isPlaying, ready: $_isReady)';
+  String toString() =>
+      'PlayerService(song: ${_currentSong?.title}, playing: $_isPlaying, ready: $_isReady)';
 }

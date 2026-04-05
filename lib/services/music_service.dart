@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
 import '../models/song.dart';
 import '../models/album.dart';
 import '../models/artist.dart';
 import 'api_service.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 // Player is unused here; playback handled by PlayerService when needed
 
 class MusicService {
@@ -12,6 +16,179 @@ class MusicService {
 
   final ApiService _api = ApiService();
   // PlayerService instance not required in this service
+
+  static const List<String> _pipedInstances = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://api.piped.yt',
+    'https://pipedapi.r4fo.com',
+    'https://pipedapi.leptons.xyz',
+  ];
+
+  static const Map<String, String> _defaultStreamHeaders = {
+    'User-Agent':
+        'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
+    'Referer': 'https://music.youtube.com/',
+    'Origin': 'https://music.youtube.com',
+  };
+
+  String? _normalizeUrl(String? value) {
+    if (value == null) return null;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    if (trimmed.startsWith('//')) return 'https:$trimmed';
+    return trimmed;
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) {
+      return int.tryParse(value) ?? (double.tryParse(value)?.toInt() ?? 0);
+    }
+    return 0;
+  }
+
+  Map<String, String> _normalizeHeaders(dynamic rawHeaders) {
+    final merged = Map<String, String>.from(_defaultStreamHeaders);
+    if (rawHeaders is Map) {
+      rawHeaders.forEach((key, value) {
+        final k = key.toString().trim();
+        final v = value?.toString().trim() ?? '';
+        if (k.isNotEmpty && v.isNotEmpty) {
+          merged[k] = v;
+        }
+      });
+    }
+    return merged;
+  }
+
+  Map<String, dynamic>? _normalizeStreamData(dynamic rawData) {
+    if (rawData is! Map) return null;
+    final data = Map<String, dynamic>.from(rawData);
+
+    final url = _normalizeUrl(
+      data['audio_url']?.toString() ?? data['stream_url']?.toString(),
+    );
+    if (url == null) return null;
+
+    return {
+      'audio_url': url,
+      'headers': _normalizeHeaders(data['headers']),
+      'source': data['source']?.toString() ?? 'backend',
+      if (data['video_id'] != null) 'video_id': data['video_id'].toString(),
+      if (data['title'] != null) 'title': data['title'].toString(),
+      if (data['duration'] != null) 'duration': _toInt(data['duration']),
+    };
+  }
+
+  Map<String, dynamic>? _pickBestPipedAudioStream(dynamic rawStreams) {
+    if (rawStreams is! List) return null;
+
+    Map<String, dynamic>? best;
+    int bestScore = -1;
+
+    for (final item in rawStreams.whereType<Map>()) {
+      final stream = Map<String, dynamic>.from(item);
+      final url = _normalizeUrl(
+        stream['url']?.toString() ?? stream['audioProxyUrl']?.toString(),
+      );
+      if (url == null) continue;
+
+      final bitrate = _toInt(stream['bitrate']);
+      final codec = (stream['codec']?.toString() ?? '').toLowerCase();
+
+      var score = bitrate;
+      if (codec.contains('opus') ||
+          codec.contains('aac') ||
+          codec.contains('mp4a')) {
+        score += 10;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = stream;
+      }
+    }
+
+    return best;
+  }
+
+  Future<Map<String, dynamic>?> _resolvePipedStream(String songId) async {
+    for (final instance in _pipedInstances) {
+      final normalizedInstance = instance.replaceFirst(RegExp(r'/$'), '');
+      final uri = Uri.parse('$normalizedInstance/streams/$songId');
+
+      try {
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          continue;
+        }
+
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map) continue;
+        final payload = Map<String, dynamic>.from(decoded);
+
+        final stream = _pickBestPipedAudioStream(payload['audioStreams']);
+        if (stream == null) continue;
+
+        var url = _normalizeUrl(
+          stream['url']?.toString() ?? stream['audioProxyUrl']?.toString(),
+        );
+        if (url == null) continue;
+        if (url.startsWith('/')) {
+          url = '$normalizedInstance$url';
+        }
+
+        return {
+          'audio_url': url,
+          'headers': Map<String, String>.from(_defaultStreamHeaders),
+          'source': 'piped',
+          'piped_instance': normalizedInstance,
+          if (payload['title'] != null) 'title': payload['title'].toString(),
+          if (payload['duration'] != null)
+            'duration': _toInt(payload['duration']),
+          'video_id': songId,
+        };
+      } on TimeoutException {
+        debugPrint('[MusicService] Piped timeout at $uri');
+      } catch (e) {
+        debugPrint('[MusicService] Piped stream lookup failed at $uri: $e');
+      }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> getStreamDataWithHint(
+    String songId,
+    String? titleHint,
+  ) async {
+    final q = titleHint != null && titleHint.isNotEmpty
+        ? '?q=${Uri.encodeComponent(titleHint)}'
+        : '';
+
+    try {
+      final res = await _api.get('/music/stream/$songId$q');
+      if (res['success'] == true && res['data'] != null) {
+        final normalized = _normalizeStreamData(res['data']);
+        if (normalized != null) return normalized;
+      }
+    } catch (e) {
+      debugPrint('[MusicService] Backend stream fetch failed: $e');
+    }
+
+    final piped = await _resolvePipedStream(songId);
+    if (piped != null) {
+      debugPrint('[MusicService] Using Piped fallback for $songId');
+      return piped;
+    }
+
+    return null;
+  }
 
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
@@ -55,37 +232,13 @@ class MusicService {
 
   // --- Stream URL (resolved on device, not backend) ---
   Future<String?> getStreamUrl(String songId) async {
-    try {
-      final res = await _api.get('/music/stream/$songId');
-      if (res['success'] == true && res['data'] != null) {
-        final data = res['data'];
-        final audioUrl = data['audio_url']?.toString();
-        if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
-      }
-    } catch (e) {
-      debugPrint('Error fetching stream URL: $e');
-    }
-    // Fallback to device resolver
-    // Device-side stream resolution removed; return null
-    return null;
+    final streamData = await getStreamDataWithHint(songId, null);
+    return streamData?['audio_url']?.toString();
   }
 
   Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
-    try {
-      final q = titleHint != null && titleHint.isNotEmpty
-          ? '?q=${Uri.encodeComponent(titleHint)}'
-          : '';
-      final res = await _api.get('/music/stream/$songId$q');
-      if (res['success'] == true && res['data'] != null) {
-        final data = res['data'];
-        final audioUrl = data['audio_url']?.toString();
-        if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
-      }
-    } catch (e) {
-      debugPrint('Error fetching stream URL with hint: $e');
-    }
-    // Device-side stream resolution removed; return null
-    return null;
+    final streamData = await getStreamDataWithHint(songId, titleHint);
+    return streamData?['audio_url']?.toString();
   }
 
   // --- Individual fetch ---
@@ -174,8 +327,11 @@ class MusicService {
     return [];
   }
 
-  Future<Map<String, dynamic>> createPlaylist(String name,
-      {String description = '', bool isPublic = true}) async {
+  Future<Map<String, dynamic>> createPlaylist(
+    String name, {
+    String description = '',
+    bool isPublic = true,
+  }) async {
     return _api.post('/playlists', {
       'name': name,
       'description': description,
@@ -208,9 +364,7 @@ class MusicService {
     String playlistId,
     String name,
   ) async {
-    return _api.put('/playlists/$playlistId', {
-      'name': name,
-    });
+    return _api.put('/playlists/$playlistId', {'name': name});
   }
 
   Future<Map<String, dynamic>> deletePlaylist(String playlistId) async {

@@ -1,7 +1,8 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart' show PlayerState;
+import 'package:youtube_player_iframe/youtube_player_iframe.dart'
+    show PlayerState;
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
@@ -17,6 +18,7 @@ import 'artist_screen.dart';
 import 'album_screen.dart';
 
 enum LibraryView { library, likedSongs, playlist }
+
 enum BrowseView { none, artist, album }
 
 class MainScreen extends StatefulWidget {
@@ -100,13 +102,30 @@ class _MainScreenState extends State<MainScreen> {
     // song.id is the YouTube videoId from search results
     debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
 
-    // Playback is handled by YouTube player controller using song video ID
+    // Resolve an audio stream and hand off to PlayerService.
     try {
-      final streamUrl = await _musicService.getStreamUrlWithHint(
+      final streamData = await _musicService.getStreamDataWithHint(
         song.id,
         song.title,
       );
-      await _player.loadSong(song, streamUrl: streamUrl);
+      final streamUrl = streamData?['audio_url']?.toString();
+
+      Map<String, String>? streamHeaders;
+      final rawHeaders = streamData?['headers'];
+      if (rawHeaders is Map) {
+        streamHeaders =
+            rawHeaders.map(
+              (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+            )..removeWhere(
+              (key, value) => key.trim().isEmpty || value.trim().isEmpty,
+            );
+      }
+
+      await _player.loadSong(
+        song,
+        streamUrl: streamUrl,
+        streamHeaders: streamHeaders,
+      );
     } catch (e) {
       debugPrint('[MainScreen] _loadAndPlay error: $e');
       if (mounted) {
@@ -165,8 +184,8 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     if (_lastSelectionFromSearch && _currentSong != null) {
-      final query =
-          '${_currentSong!.artist ?? ''} ${_currentSong!.title}'.trim();
+      final query = '${_currentSong!.artist ?? ''} ${_currentSong!.title}'
+          .trim();
       if (query.isNotEmpty) {
         final similar = await _musicService.searchSongs(query);
         final filtered = similar
@@ -493,4 +512,3 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 }
-

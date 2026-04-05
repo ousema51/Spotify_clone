@@ -71,12 +71,16 @@ class AudioCacheService {
     return path;
   }
 
-  Future<void> cacheInBackground(String songId, String url) async {
+  Future<void> cacheInBackground(
+    String songId,
+    String url, {
+    Map<String, String>? headers,
+  }) async {
     if (_activeDownloads.containsKey(songId)) {
       return _activeDownloads[songId];
     }
 
-    final future = _downloadAndStore(songId, url);
+    final future = _downloadAndStore(songId, url, headers: headers);
     _activeDownloads[songId] = future;
 
     try {
@@ -86,13 +90,20 @@ class AudioCacheService {
     }
   }
 
-  Future<void> _downloadAndStore(String songId, String url) async {
+  Future<void> _downloadAndStore(
+    String songId,
+    String url, {
+    Map<String, String>? headers,
+  }) async {
     try {
       final dir = await _cacheDir();
       final tempPath = '${dir.path}${Platform.pathSeparator}$songId.part';
       final finalPath = '${dir.path}${Platform.pathSeparator}$songId.bin';
 
       final req = http.Request('GET', Uri.parse(url));
+      if (headers != null && headers.isNotEmpty) {
+        req.headers.addAll(headers);
+      }
       final resp = await http.Client().send(req);
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         return;
@@ -120,6 +131,7 @@ class AudioCacheService {
         'path': finalPath,
         'size': totalBytes,
         'url': url,
+        'headers': headers,
         'cached_at': DateTime.now().toIso8601String(),
         'last_accessed_at': DateTime.now().toIso8601String(),
         'expires_at': DateTime.now()
@@ -145,9 +157,11 @@ class AudioCacheService {
     }
 
     entries.sort((a, b) {
-      final at = DateTime.tryParse(a.value['last_accessed_at']?.toString() ?? '') ??
+      final at =
+          DateTime.tryParse(a.value['last_accessed_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0);
-      final bt = DateTime.tryParse(b.value['last_accessed_at']?.toString() ?? '') ??
+      final bt =
+          DateTime.tryParse(b.value['last_accessed_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0);
       return at.compareTo(bt);
     });
