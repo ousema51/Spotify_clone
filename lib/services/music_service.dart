@@ -17,13 +17,22 @@ class MusicService {
   final ApiService _api = ApiService();
   // PlayerService instance not required in this service
 
-  static const List<String> _pipedInstances = [
+  static const String _pipedRegistryUrl =
+      'https://piped-instances.kavin.rocks';
+  static const Duration _pipedRequestTimeout = Duration(seconds: 8);
+  static const Duration _pipedRegistryCacheTtl = Duration(minutes: 30);
+
+  static const List<String> _fallbackPipedInstances = [
+    'https://api.piped.private.coffee',
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://api.piped.yt',
     'https://pipedapi.r4fo.com',
     'https://pipedapi.leptons.xyz',
   ];
+
+  List<String>? _cachedPipedInstances;
+  DateTime? _pipedInstancesFetchedAt;
 
   static const Map<String, String> _defaultStreamHeaders = {
     'User-Agent':
@@ -83,6 +92,125 @@ class MusicService {
     };
   }
 
+  bool _isValidVideoId(String value) {
+    return RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(value);
+  }
+
+  String? _extractVideoIdFromText(String? value) {
+    if (value == null) return null;
+
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    if (_isValidVideoId(trimmed)) return trimmed;
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null) {
+      final queryVideoId = uri.queryParameters['v'];
+      if (queryVideoId != null && _isValidVideoId(queryVideoId)) {
+        return queryVideoId;
+      }
+
+      if (uri.pathSegments.isNotEmpty) {
+        final lastSegment = uri.pathSegments.last;
+        if (_isValidVideoId(lastSegment)) {
+          return lastSegment;
+        }
+      }
+    }
+
+    final match = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(trimmed);
+    return match?.group(1);
+  }
+
+  String? _extractVideoIdFromPipedItem(Map<String, dynamic> item) {
+    final fromId = _extractVideoIdFromText(item['id']?.toString());
+    if (fromId != null) return fromId;
+
+    final rawUrl = item['url']?.toString();
+    if (rawUrl == null || rawUrl.trim().isEmpty) return null;
+
+    final normalizedUrl = rawUrl.startsWith('http')
+        ? rawUrl
+        : 'https://www.youtube.com$rawUrl';
+    return _extractVideoIdFromText(normalizedUrl);
+  }
+
+  String? _normalizeInstanceUrl(String? value) {
+    if (value == null) return null;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('https://')) return null;
+    return trimmed.replaceFirst(RegExp(r'/$'), '');
+  }
+
+  List<String> _dedupeInstances(Iterable<String> rawInstances) {
+    final seen = <String>{};
+    final normalized = <String>[];
+
+    for (final instance in rawInstances) {
+      final cleaned = _normalizeInstanceUrl(instance);
+      if (cleaned == null) continue;
+      if (seen.add(cleaned)) {
+        normalized.add(cleaned);
+      }
+    }
+
+    return normalized;
+  }
+
+  Future<List<String>> _loadPipedInstances() async {
+    final now = DateTime.now();
+    if (_cachedPipedInstances != null && _pipedInstancesFetchedAt != null) {
+      final age = now.difference(_pipedInstancesFetchedAt!);
+      if (age < _pipedRegistryCacheTtl && _cachedPipedInstances!.isNotEmpty) {
+        return _cachedPipedInstances!;
+      }
+    }
+
+    final discoveredInstances = <String>[];
+    try {
+      final response = await http
+          .get(
+            Uri.parse(_pipedRegistryUrl),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(_pipedRequestTimeout);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          for (final item in decoded.whereType<Map>()) {
+            final apiUrl =
+                item['api_url']?.toString() ?? item['apiUrl']?.toString();
+            final normalized = _normalizeInstanceUrl(apiUrl);
+            if (normalized != null) {
+              discoveredInstances.add(normalized);
+            }
+          }
+        }
+      } else {
+        debugPrint(
+          '[MusicService] Piped registry request failed: ${response.statusCode}',
+        );
+      }
+    } on TimeoutException {
+      debugPrint('[MusicService] Piped registry timeout');
+    } catch (e) {
+      debugPrint('[MusicService] Piped registry lookup failed: $e');
+    }
+
+    _cachedPipedInstances = _dedupeInstances([
+      ...discoveredInstances,
+      ..._fallbackPipedInstances,
+    ]);
+    _pipedInstancesFetchedAt = now;
+
+    if (_cachedPipedInstances!.isEmpty) {
+      _cachedPipedInstances = List<String>.from(_fallbackPipedInstances);
+    }
+
+    return _cachedPipedInstances!;
+  }
+
   Map<String, dynamic>? _pickBestPipedAudioStream(dynamic rawStreams) {
     if (rawStreams is! List) return null;
 
@@ -115,15 +243,20 @@ class MusicService {
     return best;
   }
 
-  Future<Map<String, dynamic>?> _resolvePipedStream(String songId) async {
-    for (final instance in _pipedInstances) {
-      final normalizedInstance = instance.replaceFirst(RegExp(r'/$'), '');
-      final uri = Uri.parse('$normalizedInstance/streams/$songId');
+  Future<Map<String, dynamic>?> _resolvePipedStreamByVideoId(
+    String songId,
+    List<String> instances,
+  ) async {
+    final videoId = _extractVideoIdFromText(songId);
+    if (videoId == null) return null;
+
+    for (final normalizedInstance in instances) {
+      final uri = Uri.parse('$normalizedInstance/streams/$videoId');
 
       try {
         final response = await http
             .get(uri)
-            .timeout(const Duration(seconds: 8));
+            .timeout(_pipedRequestTimeout);
         if (response.statusCode < 200 || response.statusCode >= 300) {
           continue;
         }
@@ -151,7 +284,7 @@ class MusicService {
           if (payload['title'] != null) 'title': payload['title'].toString(),
           if (payload['duration'] != null)
             'duration': _toInt(payload['duration']),
-          'video_id': songId,
+          'video_id': videoId,
         };
       } on TimeoutException {
         debugPrint('[MusicService] Piped timeout at $uri');
@@ -163,27 +296,116 @@ class MusicService {
     return null;
   }
 
+  Future<Map<String, dynamic>?> _resolvePipedStreamBySearch(
+    String titleHint,
+    List<String> instances,
+  ) async {
+    final query = titleHint.trim();
+    if (query.isEmpty) return null;
+
+    const filters = ['music_songs', 'videos'];
+
+    for (final normalizedInstance in instances) {
+      for (final filter in filters) {
+        final uri = Uri.parse('$normalizedInstance/search').replace(
+          queryParameters: {'q': query, 'filter': filter},
+        );
+
+        try {
+          final response = await http
+              .get(uri, headers: const {'Accept': 'application/json'})
+              .timeout(_pipedRequestTimeout);
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            continue;
+          }
+
+          final decoded = jsonDecode(response.body);
+          final items = decoded is List
+              ? decoded
+              : (decoded is Map && decoded['items'] is List
+                    ? decoded['items'] as List
+                    : const <dynamic>[]);
+
+          for (final item in items.take(6)) {
+            if (item is! Map) continue;
+
+            final itemMap = Map<String, dynamic>.from(item);
+            final resolvedId = _extractVideoIdFromPipedItem(itemMap);
+            if (resolvedId == null) continue;
+
+            final resolved = await _resolvePipedStreamByVideoId(
+              resolvedId,
+              [normalizedInstance],
+            );
+            if (resolved != null) {
+              resolved['source'] = 'piped-search';
+              resolved['search_query'] = query;
+              return resolved;
+            }
+          }
+        } on TimeoutException {
+          debugPrint('[MusicService] Piped search timeout at $uri');
+        } catch (e) {
+          debugPrint('[MusicService] Piped search failed at $uri: $e');
+        }
+      }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _resolvePipedStream(
+    String songId, {
+    String? titleHint,
+  }) async {
+    final instances = await _loadPipedInstances();
+
+    final direct = await _resolvePipedStreamByVideoId(songId, instances);
+    if (direct != null) {
+      return direct;
+    }
+
+    final query = (titleHint ?? '').trim();
+    if (query.isNotEmpty) {
+      final searched = await _resolvePipedStreamBySearch(query, instances);
+      if (searched != null) {
+        return searched;
+      }
+    }
+
+    return null;
+  }
+
   Future<Map<String, dynamic>?> getStreamDataWithHint(
     String songId,
     String? titleHint,
   ) async {
-    final q = titleHint != null && titleHint.isNotEmpty
-        ? '?q=${Uri.encodeComponent(titleHint)}'
-        : '';
+    final normalizedHint = (titleHint ?? '').trim();
 
-    try {
-      final res = await _api.get('/music/stream/$songId$q');
-      if (res['success'] == true && res['data'] != null) {
-        final normalized = _normalizeStreamData(res['data']);
-        if (normalized != null) return normalized;
+    final backendPaths = <String>[
+      '/music/stream/$songId',
+      if (normalizedHint.isNotEmpty)
+        '/music/stream/$songId?q=${Uri.encodeComponent(normalizedHint)}',
+    ];
+
+    for (final path in backendPaths) {
+      try {
+        final res = await _api.get(path);
+        if (res['success'] == true && res['data'] != null) {
+          final normalized = _normalizeStreamData(res['data']);
+          if (normalized != null) {
+            return normalized;
+          }
+        }
+      } catch (e) {
+        debugPrint('[MusicService] Backend stream fetch failed ($path): $e');
       }
-    } catch (e) {
-      debugPrint('[MusicService] Backend stream fetch failed: $e');
     }
 
-    final piped = await _resolvePipedStream(songId);
+    final piped = await _resolvePipedStream(songId, titleHint: normalizedHint);
     if (piped != null) {
-      debugPrint('[MusicService] Using Piped fallback for $songId');
+      final resolvedId = piped['video_id']?.toString() ?? songId;
+      debugPrint('[MusicService] Using Piped fallback for $resolvedId');
       return piped;
     }
 
