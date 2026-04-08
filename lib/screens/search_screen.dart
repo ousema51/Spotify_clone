@@ -38,8 +38,14 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _hasSearched = false;
 
   final List<String> _genres = [
-    'Pop', 'Hip Hop', 'Rock', 'Indie',
-    'Jazz', 'Electronic', 'Classical', 'R&B',
+    'Pop',
+    'Hip Hop',
+    'Rock',
+    'Indie',
+    'Jazz',
+    'Electronic',
+    'Classical',
+    'R&B',
   ];
 
   final List<Color> _genreColors = [
@@ -165,12 +171,13 @@ class _SearchScreenState extends State<SearchScreen> {
               decoration: InputDecoration(
                 hintText: 'What do you want to listen to?',
                 hintStyle: TextStyle(color: Colors.grey[500]),
-                prefixIcon:
-                    Icon(Icons.search_rounded, color: Colors.grey[400]),
+                prefixIcon: Icon(Icons.search_rounded, color: Colors.grey[400]),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
-                        icon: Icon(Icons.clear_rounded,
-                            color: Colors.grey[400]),
+                        icon: Icon(
+                          Icons.clear_rounded,
+                          color: Colors.grey[400],
+                        ),
                         onPressed: () {
                           _searchController.clear();
                           if (mounted) setState(() {});
@@ -194,7 +201,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
               )
             else if (_searchController.text.trim().isEmpty &&
-              _recentSelectedSongs.isNotEmpty)
+                _recentSelectedSongs.isNotEmpty)
               Expanded(child: _buildRecentSelections())
             else if (_hasSearched)
               Expanded(child: _buildSearchResults())
@@ -215,11 +222,12 @@ class _SearchScreenState extends State<SearchScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          ..._songResults.map((song) => SongTile(
-                song: song,
-                onTap: () =>
-                    _onSongSelectedFromSearch(song, _songResults),
-              )),
+          ..._songResults.map(
+            (song) => SongTile(
+              song: song,
+              onTap: () => _onSongSelectedFromSearch(song, _songResults),
+            ),
+          ),
           const SizedBox(height: 20),
         ],
         if (_artistResults.isNotEmpty) ...[
@@ -325,7 +333,7 @@ class _SearchScreenState extends State<SearchScreen> {
               return Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [color, color.withOpacity(0.7)],
+                    colors: [color, color.withValues(alpha: 0.7)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -351,4 +359,3 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 }
-

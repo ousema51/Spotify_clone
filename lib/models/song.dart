@@ -44,7 +44,10 @@ class Song {
   static String _pickSongId(Map<String, dynamic> json) {
     final rawCandidates = <dynamic>[
       json['song_id'],
+      json['video_id'],
       json['videoId'],
+      json['videoID'],
+      json['ytId'],
       json['id'],
       json['_id'],
     ];

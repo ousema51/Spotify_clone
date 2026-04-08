@@ -259,7 +259,48 @@ def _resolve_stream_from_yt_dlp(target, from_search=False):
 
     if from_search and isinstance(info, dict):
         entries = info.get("entries") or []
-        info = entries[0] if entries else None
+        if not isinstance(entries, list):
+            entries = []
+
+        # Search ordering is noisy; try several entries and return first playable one.
+        for entry in entries[:5]:
+            if not isinstance(entry, dict):
+                continue
+
+            selected = _pick_best_format(entry)
+            stream_url = None
+            extra_headers = None
+
+            if selected:
+                stream_url = _safe_str(selected.get("url"))
+                extra_headers = selected.get("http_headers")
+
+            if not stream_url:
+                stream_url = _safe_str(entry.get("url"))
+                if not extra_headers:
+                    extra_headers = entry.get("http_headers")
+
+            if not stream_url:
+                continue
+
+            video_id = _safe_str(entry.get("id"))
+            title = _safe_str(entry.get("title"))
+            duration = _safe_int(entry.get("duration"))
+            headers = _merged_stream_headers(extra_headers)
+
+            return {
+                "success": True,
+                "data": {
+                    "audio_url": stream_url,
+                    "headers": headers,
+                    "video_id": video_id,
+                    "title": title,
+                    "duration": duration,
+                    "source": "yt-dlp",
+                },
+            }
+
+        return {"success": False, "message": "No playable search stream found"}
 
     if not isinstance(info, dict):
         return {"success": False, "message": "Unable to extract stream info"}
@@ -398,7 +439,7 @@ def get_stream_from_search(query=""):
         return {"success": False, "message": "No query provided"}
     query = query.strip()
 
-    via_ytdlp = _resolve_stream_from_yt_dlp("ytsearch1:{}".format(query), from_search=True)
+    via_ytdlp = _resolve_stream_from_yt_dlp("ytsearch5:{}".format(query), from_search=True)
     if via_ytdlp.get("success"):
         return via_ytdlp
 

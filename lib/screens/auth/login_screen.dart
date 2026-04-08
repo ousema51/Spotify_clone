@@ -44,7 +44,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (result['success'] == true) {
-        Navigator.pushReplacementNamed(context, '/main');
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).pushNamedAndRemoveUntil('/main', (route) => false);
       } else {
         final message = result['message'] ?? 'Something went wrong';
         ScaffoldMessenger.of(context).showSnackBar(
@@ -54,6 +57,14 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Login failed: $e'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -80,8 +91,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: Color(0xFF0B3B8C),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.music_note_rounded,
-                        color: Colors.white, size: 40),
+                    child: const Icon(
+                      Icons.music_note_rounded,
+                      color: Colors.white,
+                      size: 40,
+                    ),
                   ),
                   const SizedBox(height: 20),
 
@@ -109,8 +123,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: InputDecoration(
                       labelText: 'Username',
                       labelStyle: TextStyle(color: Colors.grey[400]),
-                      prefixIcon: Icon(Icons.person_outline_rounded,
-                          color: Colors.grey[400]),
+                      prefixIcon: Icon(
+                        Icons.person_outline_rounded,
+                        color: Colors.grey[400],
+                      ),
                       filled: true,
                       fillColor: const Color(0xFF282828),
                       border: OutlineInputBorder(
@@ -120,7 +136,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: const BorderSide(
-                            color: Color(0xFF0B3B8C), width: 1.5),
+                          color: Color(0xFF0B3B8C),
+                          width: 1.5,
+                        ),
                       ),
                     ),
                     validator: (value) {
@@ -140,8 +158,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: InputDecoration(
                       labelText: 'Password',
                       labelStyle: TextStyle(color: Colors.grey[400]),
-                      prefixIcon: Icon(Icons.lock_outline_rounded,
-                          color: Colors.grey[400]),
+                      prefixIcon: Icon(
+                        Icons.lock_outline_rounded,
+                        color: Colors.grey[400],
+                      ),
                       filled: true,
                       fillColor: const Color(0xFF282828),
                       border: OutlineInputBorder(
@@ -151,7 +171,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: const BorderSide(
-                            color: Color(0xFF0B3B8C), width: 1.5),
+                          color: Color(0xFF0B3B8C),
+                          width: 1.5,
+                        ),
                       ),
                     ),
                     validator: (value) {
@@ -210,9 +232,15 @@ class _LoginScreenState extends State<LoginScreen> {
                             : 'Already have an account? ',
                         style: TextStyle(color: Colors.grey[400]),
                       ),
-                      GestureDetector(
-                        onTap: () =>
-                            setState(() => _isLogin = !_isLogin),
+                      TextButton(
+                        onPressed: _isLoading
+                            ? null
+                            : () => setState(() => _isLogin = !_isLogin),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 0),
+                          padding: EdgeInsets.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
                         child: Text(
                           _isLogin ? 'Sign up' : 'Log in',
                           style: const TextStyle(
@@ -232,4 +260,3 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-

@@ -62,7 +62,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     _position = _player.position;
     _duration = _player.duration;
     _syncProgressFromPlayer();
-    
+
     // Listen to player state changes
     _player.playingNotifier.addListener(_onPlayerStateChanged);
     _player.positionNotifier.addListener(_onPlayerProgressChanged);
@@ -233,13 +233,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF0B3B8C).withOpacity(0.25),
+                          color: const Color(
+                            0xFF0B3B8C,
+                          ).withValues(alpha: 0.25),
                           blurRadius: 40,
                           offset: const Offset(0, 16),
                           spreadRadius: 4,
                         ),
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.5),
+                          color: Colors.black.withValues(alpha: 0.5),
                           blurRadius: 30,
                           offset: const Offset(0, 10),
                         ),
@@ -381,18 +383,26 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                     ),
                     child: Slider(
                       value: _currentSliderValue.clamp(0.0, 1.0),
-                      onChangeStart: (_) {
-                        setState(() => _isSeeking = true);
-                      },
-                      onChanged: (val) {
-                        setState(() => _currentSliderValue = val.clamp(0.0, 1.0));
-                      },
-                      onChangeEnd: (val) async {
-                        await _player.seekToFraction(val);
-                        if (mounted) {
-                          setState(() => _isSeeking = false);
-                        }
-                      },
+                      onChangeStart: song == null
+                          ? null
+                          : (_) {
+                              setState(() => _isSeeking = true);
+                            },
+                      onChanged: song == null
+                          ? null
+                          : (val) {
+                              setState(
+                                () => _currentSliderValue = val.clamp(0.0, 1.0),
+                              );
+                            },
+                      onChangeEnd: song == null
+                          ? null
+                          : (val) async {
+                              await _player.seekToFraction(val);
+                              if (mounted) {
+                                setState(() => _isSeeking = false);
+                              }
+                            },
                     ),
                   ),
 
@@ -405,9 +415,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         Text(
                           _formatDurationValue(
                             Duration(
-                              milliseconds: (_duration.inMilliseconds *
-                                      _currentSliderValue)
-                                  .round(),
+                              milliseconds:
+                                  (_duration.inMilliseconds *
+                                          _currentSliderValue)
+                                      .round(),
                             ),
                           ),
                           style: TextStyle(
@@ -451,13 +462,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         onPressed: widget.onPrevious,
                       ),
                       GestureDetector(
-                        onTap: () async {
-                          if (_isPlaying) {
-                            await _player.pause();
-                          } else {
-                            await _player.play();
-                          }
-                        },
+                        onTap: song == null
+                            ? null
+                            : () async {
+                                if (_isPlaying) {
+                                  await _player.pause();
+                                } else {
+                                  await _player.play();
+                                }
+                              },
                         child: Container(
                           width: 64,
                           height: 64,
@@ -490,10 +503,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       ),
                       IconButton(
                         icon: Icon(
-                            widget.repeatMode == QueueRepeatMode.one
+                          widget.repeatMode == QueueRepeatMode.one
                               ? Icons.repeat_one_rounded
                               : Icons.repeat_rounded,
-                            color: widget.repeatMode != QueueRepeatMode.off
+                          color: widget.repeatMode != QueueRepeatMode.off
                               ? const Color(0xFF0B3B8C)
                               : Colors.grey[400],
                           size: 24,
@@ -549,4 +562,3 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     );
   }
 }
-

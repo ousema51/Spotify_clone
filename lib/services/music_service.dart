@@ -379,20 +379,26 @@ class MusicService {
     String songId,
     String? titleHint,
   ) async {
+    final normalizedSongId = _extractVideoIdFromText(songId) ?? songId.trim();
     final normalizedHint = (titleHint ?? '').trim();
+    final routeSongId = normalizedSongId.isNotEmpty
+        ? normalizedSongId
+        : 'search';
 
     final backendPaths = <String>[
-      '/music/stream/$songId',
       if (normalizedHint.isNotEmpty)
-        '/music/stream/$songId?q=${Uri.encodeComponent(normalizedHint)}',
+        '/music/stream/${Uri.encodeComponent(routeSongId)}?q=${Uri.encodeComponent(normalizedHint)}',
+      if (normalizedSongId.isNotEmpty)
+        '/music/stream/${Uri.encodeComponent(normalizedSongId)}',
     ];
 
     for (final path in backendPaths) {
       try {
-        final res = await _api.get(path);
+        final res = await _api.get(path).timeout(const Duration(seconds: 8));
         if (res['success'] == true && res['data'] != null) {
           final normalized = _normalizeStreamData(res['data']);
           if (normalized != null) {
+            debugPrint('[MusicService] Using backend stream for $path');
             return normalized;
           }
         }
@@ -402,7 +408,7 @@ class MusicService {
     }
 
     final resolvedByYoutube = await youtube_stream_resolver.resolveStream(
-      songId: songId,
+      songId: normalizedSongId,
       titleHint: normalizedHint,
       defaultHeaders: _defaultStreamHeaders,
     );
@@ -417,7 +423,10 @@ class MusicService {
       }
     }
 
-    final piped = await _resolvePipedStream(songId, titleHint: normalizedHint);
+    final piped = await _resolvePipedStream(
+      normalizedSongId.isNotEmpty ? normalizedSongId : songId,
+      titleHint: normalizedHint,
+    );
     if (piped != null) {
       final resolvedId = piped['video_id']?.toString() ?? songId;
       debugPrint('[MusicService] Using Piped fallback for $resolvedId');
@@ -465,17 +474,6 @@ class MusicService {
           .toList();
     }
     return [];
-  }
-
-  // --- Stream URL (resolved on device, not backend) ---
-  Future<String?> getStreamUrl(String songId) async {
-    final streamData = await getStreamDataWithHint(songId, null);
-    return streamData?['audio_url']?.toString();
-  }
-
-  Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
-    final streamData = await getStreamDataWithHint(songId, titleHint);
-    return streamData?['audio_url']?.toString();
   }
 
   // --- Individual fetch ---

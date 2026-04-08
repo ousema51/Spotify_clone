@@ -3,17 +3,18 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart' show MediaItem;
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart' as yt;
+
 import '../models/song.dart';
 import 'audio_cache_service.dart';
 
 enum QueueRepeatMode { off, all, one }
 
+enum PlayerPlaybackState { idle, loading, playing, paused, completed, error }
+
 class PlayerService {
   static final PlayerService _instance = PlayerService._internal();
   factory PlayerService() => _instance;
 
-  yt.YoutubePlayerController? _controller;
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioCacheService _cache = AudioCacheService();
 
@@ -25,8 +26,6 @@ class PlayerService {
     'Origin': 'https://music.youtube.com',
   };
 
-  StreamSubscription<yt.YoutubePlayerValue>? _controllerStateSubscription;
-  StreamSubscription<yt.YoutubeVideoState>? _videoStateSubscription;
   StreamSubscription<PlayerState>? _audioStateSubscription;
   StreamSubscription<Duration>? _audioPositionSubscription;
   StreamSubscription<Duration?>? _audioDurationSubscription;
@@ -34,15 +33,13 @@ class PlayerService {
   Song? _currentSong;
   bool _isPlaying = false;
   bool _isReady = false;
-  bool _usingAudioEngine = false;
-  yt.YoutubeError? _lastYoutubeError;
+  int _loadGeneration = 0;
 
   // Listeners for UI updates
   final ValueNotifier<bool> _playingNotifier = ValueNotifier(false);
   final ValueNotifier<bool> _readyNotifier = ValueNotifier(false);
-  final ValueNotifier<yt.PlayerState> _playerStateNotifier = ValueNotifier(
-    yt.PlayerState.unknown,
-  );
+  final ValueNotifier<PlayerPlaybackState> _playbackStateNotifier =
+      ValueNotifier(PlayerPlaybackState.idle);
   final ValueNotifier<Duration> _positionNotifier = ValueNotifier(
     Duration.zero,
   );
@@ -50,7 +47,9 @@ class PlayerService {
     Duration.zero,
   );
 
-  PlayerService._internal();
+  PlayerService._internal() {
+    _ensureAudioListeners();
+  }
 
   MediaItem _buildMediaItem(Song song, String sourceId) {
     return MediaItem(
@@ -68,75 +67,41 @@ class PlayerService {
     );
   }
 
-  void _ensureController() {
-    if (_controller != null) return;
-
-    _controller = yt.YoutubePlayerController(
-      params: const yt.YoutubePlayerParams(
-        showControls: false,
-        showFullscreenButton: false,
-        mute: false,
-        playsInline: true,
-        strictRelatedVideos: true,
-      ),
-    );
-
-    _controllerStateSubscription?.cancel();
-    _videoStateSubscription?.cancel();
-
-    _controllerStateSubscription = _controller!.listen((state) {
-      _playerStateNotifier.value = state.playerState;
-
-      final bool isPlayerReady =
-          state.playerState != yt.PlayerState.unknown &&
-          state.playerState != yt.PlayerState.unStarted;
-      if (isPlayerReady != _isReady) {
-        _isReady = isPlayerReady;
-        _readyNotifier.value = _isReady;
-      }
-
-      final bool isCurrentlyPlaying =
-          state.playerState == yt.PlayerState.playing;
-      if (isCurrentlyPlaying != _isPlaying) {
-        _isPlaying = isCurrentlyPlaying;
-        _playingNotifier.value = _isPlaying;
-      }
-
-      final Duration metaDuration = state.metaData.duration;
-      if (metaDuration > Duration.zero &&
-          metaDuration != _durationNotifier.value) {
-        _durationNotifier.value = metaDuration;
-      }
-
-      if (state.hasError) {
-        _lastYoutubeError = state.error;
-        debugPrint('[PlayerService] Error: ${state.error}');
-      } else if (state.playerState == yt.PlayerState.playing) {
-        _lastYoutubeError = null;
-      }
-    });
-
-    _videoStateSubscription = _controller!.videoStateStream.listen((
-      videoState,
-    ) {
-      _positionNotifier.value = videoState.position;
-    });
-  }
-
   void _ensureAudioListeners() {
-    _audioStateSubscription ??= _audioPlayer.playerStateStream.listen((state) {
-      final bool playing = state.playing;
-      if (playing != _isPlaying) {
-        _isPlaying = playing;
-        _playingNotifier.value = _isPlaying;
-      }
+    _audioStateSubscription ??= _audioPlayer.playerStateStream.listen(
+      (state) {
+        _playbackStateNotifier.value = _mapPlaybackState(state);
 
-      if (state.processingState == ProcessingState.completed) {
-        _playerStateNotifier.value = yt.PlayerState.ended;
-        _isPlaying = false;
-        _playingNotifier.value = false;
-      }
-    });
+        final bool playing =
+            state.playing && state.processingState == ProcessingState.ready;
+        if (playing != _isPlaying) {
+          _isPlaying = playing;
+          _playingNotifier.value = _isPlaying;
+        }
+
+        final bool ready =
+            state.processingState == ProcessingState.ready ||
+            state.processingState == ProcessingState.completed;
+        if (ready != _isReady) {
+          _isReady = ready;
+          _readyNotifier.value = _isReady;
+        }
+
+        if (state.processingState == ProcessingState.completed) {
+          _isPlaying = false;
+          _playingNotifier.value = false;
+
+          final finishedAt = _audioPlayer.duration;
+          if (finishedAt != null && finishedAt > Duration.zero) {
+            _positionNotifier.value = finishedAt;
+          }
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _playbackStateNotifier.value = PlayerPlaybackState.error;
+        debugPrint('[PlayerService] Player stream error: $error');
+      },
+    );
 
     _audioPositionSubscription ??= _audioPlayer.positionStream.listen((pos) {
       _positionNotifier.value = pos;
@@ -147,6 +112,22 @@ class PlayerService {
         _durationNotifier.value = dur;
       }
     });
+  }
+
+  PlayerPlaybackState _mapPlaybackState(PlayerState state) {
+    switch (state.processingState) {
+      case ProcessingState.idle:
+        return PlayerPlaybackState.idle;
+      case ProcessingState.loading:
+      case ProcessingState.buffering:
+        return PlayerPlaybackState.loading;
+      case ProcessingState.ready:
+        return state.playing
+            ? PlayerPlaybackState.playing
+            : PlayerPlaybackState.paused;
+      case ProcessingState.completed:
+        return PlayerPlaybackState.completed;
+    }
   }
 
   Map<String, String> _buildStreamHeaders(Map<String, String>? streamHeaders) {
@@ -164,229 +145,57 @@ class PlayerService {
     return merged;
   }
 
-  Future<void> _stopCurrentEngine() async {
-    if (_usingAudioEngine) {
-      try {
-        await _audioPlayer.stop();
-      } catch (_) {}
-    } else {
-      if (_controller != null) {
-        try {
-          await _controller!.stopVideo();
-        } catch (_) {}
-      }
-    }
-  }
+  bool _isActiveLoad(int generation) => generation == _loadGeneration;
 
-  String? _extractYoutubeVideoId(String raw) {
-    final input = raw.trim();
-    if (input.isEmpty) return null;
-
-    final idRegex = RegExp(r'^[A-Za-z0-9_-]{11}$');
-    if (idRegex.hasMatch(input)) {
-      return input;
-    }
-
-    final uri = Uri.tryParse(input);
-    if (uri != null) {
-      final fromQuery = uri.queryParameters['v'];
-      if (fromQuery != null && idRegex.hasMatch(fromQuery)) {
-        return fromQuery;
-      }
-
-      if (uri.pathSegments.isNotEmpty) {
-        final last = uri.pathSegments.last;
-        if (idRegex.hasMatch(last)) {
-          return last;
-        }
-      }
-    }
-
-    final loose = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(input);
-    return loose?.group(1);
-  }
-
-  bool _isFatalYoutubeError(yt.YoutubeError? error) {
-    if (error == null || error == yt.YoutubeError.none) {
-      return false;
-    }
-
-    switch (error) {
-      case yt.YoutubeError.invalidParam:
-      case yt.YoutubeError.videoNotFound:
-      case yt.YoutubeError.notEmbeddable:
-      case yt.YoutubeError.cannotFindVideo:
-      case yt.YoutubeError.sameAsNotEmbeddable:
-        return true;
-      case yt.YoutubeError.html5Error:
-      case yt.YoutubeError.unknown:
-      case yt.YoutubeError.none:
-        return false;
-    }
-  }
-
-  Future<bool> _waitForYoutubePlaybackStart({
-    Duration timeout = const Duration(seconds: 6),
-  }) async {
-    final stopwatch = Stopwatch()..start();
-
-    while (stopwatch.elapsed < timeout) {
-      final state = _playerStateNotifier.value;
-      if (state == yt.PlayerState.playing) {
-        return true;
-      }
-
-      // Buffering with known position indicates the stream has started.
-      if (state == yt.PlayerState.buffering &&
-          _positionNotifier.value > Duration.zero) {
-        return true;
-      }
-
-      if (_isFatalYoutubeError(_lastYoutubeError)) {
-        return false;
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-    }
-
-    return _playerStateNotifier.value == yt.PlayerState.playing;
-  }
-
-  Future<void> _playYoutubeWithRetries(
-    yt.YoutubePlayerController controller, {
-    required String videoId,
-  }) async {
-    final bool isAndroid =
-        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-    final int maxAttempts = isAndroid ? 5 : 3;
-
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      _lastYoutubeError = null;
-
-      if (attempt == 1) {
-        await controller.cueVideoById(videoId: videoId);
-      } else if (attempt == 3) {
-        await controller.loadVideoByUrl(
-          mediaContentUrl: 'https://www.youtube.com/watch?v=$videoId',
-        );
-      } else {
-        await controller.loadVideoById(videoId: videoId);
-      }
-
-      if (isAndroid) {
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-      }
-
-      final bool mutedAttempt = isAndroid && attempt >= 4;
-      if (mutedAttempt) {
-        await controller.mute();
-      }
-
-      await controller.playVideo();
-
-      final started = await _waitForYoutubePlaybackStart(
-        timeout: Duration(
-          milliseconds: isAndroid ? 3000 + (attempt * 1200) : 1600,
-        ),
-      );
-      if (started) {
-        if (mutedAttempt) {
-          unawaited(controller.unMute());
-        }
-        return;
-      }
-
-      if (_isFatalYoutubeError(_lastYoutubeError)) {
-        break;
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 450));
-    }
-
-    final state = _playerStateNotifier.value;
-    final errorText = _lastYoutubeError?.toString() ?? 'none';
-    throw StateError(
-      'YouTube playback did not start for $videoId (state: $state, error: $errorText)',
-    );
-  }
-
-  Future<void> _loadSongWithYoutubeIFrame(Song song) async {
-    _usingAudioEngine = false;
-    _ensureController();
-
-    final resolvedVideoId = _extractYoutubeVideoId(song.id);
-    if (resolvedVideoId == null) {
-      throw FormatException('Invalid YouTube video id: ${song.id}');
-    }
-
-    _lastYoutubeError = null;
-    final controller = _controller!;
-    await _playYoutubeWithRetries(controller, videoId: resolvedVideoId);
-
-    if (!_isReady) {
-      _isReady = true;
-      _readyNotifier.value = true;
-    }
-
-    debugPrint(
-      '[PlayerService] Loading YouTube iframe playback: ${song.title} (ID: $resolvedVideoId)',
-    );
-  }
-
-  /// Load a song and start playback using the same shared controller.
+  /// Load a song and start playback using just_audio across platforms.
   Future<void> loadSong(
     Song song, {
     String? streamUrl,
     Map<String, String>? streamHeaders,
   }) async {
+    final loadGeneration = ++_loadGeneration;
+
     _currentSong = song;
 
     _isReady = false;
     _readyNotifier.value = false;
     _isPlaying = false;
     _playingNotifier.value = false;
-    _playerStateNotifier.value = yt.PlayerState.unknown;
+    _playbackStateNotifier.value = PlayerPlaybackState.idle;
     _positionNotifier.value = Duration.zero;
     _durationNotifier.value = (song.duration != null && song.duration! > 0)
         ? Duration(seconds: song.duration!)
         : Duration.zero;
 
-    await _stopCurrentEngine();
+    await _audioPlayer.stop();
 
-    if (kIsWeb) {
-      try {
-        await _loadSongWithYoutubeIFrame(song);
-        return;
-      } catch (e) {
-        debugPrint('[PlayerService] Web YouTube load failed: $e');
-      }
-    }
+    if (!_isActiveLoad(loadGeneration)) return;
+
+    final cacheKey = song.id.trim();
 
     String? cachedPath;
-    if (!kIsWeb) {
+    if (!kIsWeb && cacheKey.isNotEmpty) {
       try {
-        cachedPath = await _cache.getCachedFilePath(song.id);
+        cachedPath = await _cache.getCachedFilePath(cacheKey);
       } catch (e) {
         debugPrint('[PlayerService] Cache lookup skipped: $e');
       }
     }
 
+    if (!_isActiveLoad(loadGeneration)) return;
+
     if (cachedPath != null) {
       try {
-        _usingAudioEngine = true;
-        _ensureAudioListeners();
-        if (kIsWeb) {
-          await _audioPlayer.setFilePath(cachedPath);
-        } else {
-          final sourceId = Uri.file(cachedPath).toString();
-          await _audioPlayer.setAudioSource(
-            AudioSource.file(cachedPath, tag: _buildMediaItem(song, sourceId)),
-          );
-        }
-        _isReady = true;
-        _readyNotifier.value = true;
-        _playerStateNotifier.value = yt.PlayerState.cued;
+        _playbackStateNotifier.value = PlayerPlaybackState.loading;
+        final sourceId = Uri.file(cachedPath).toString();
+        await _audioPlayer.setAudioSource(
+          AudioSource.file(cachedPath, tag: _buildMediaItem(song, sourceId)),
+        );
+        if (!_isActiveLoad(loadGeneration)) return;
+
         await _audioPlayer.play();
+        if (!_isActiveLoad(loadGeneration)) return;
+
         debugPrint('[PlayerService] Playing cached audio for: ${song.title}');
         return;
       } catch (e) {
@@ -394,62 +203,59 @@ class PlayerService {
       }
     }
 
-    if (streamUrl != null && streamUrl.isNotEmpty) {
-      try {
-        _usingAudioEngine = true;
-        _ensureAudioListeners();
-        final mergedHeaders = _buildStreamHeaders(streamHeaders);
-        if (kIsWeb) {
-          await _audioPlayer.setUrl(streamUrl, headers: mergedHeaders);
-        } else {
-          final uri = Uri.parse(streamUrl);
-          await _audioPlayer.setAudioSource(
-            AudioSource.uri(
-              uri,
-              headers: mergedHeaders,
-              tag: _buildMediaItem(song, uri.toString()),
-            ),
-          );
-        }
-        _isReady = true;
-        _readyNotifier.value = true;
-        _playerStateNotifier.value = yt.PlayerState.cued;
-        await _audioPlayer.play();
-        if (!kIsWeb) {
-          unawaited(
-            _cache.cacheInBackground(
-              song.id,
-              streamUrl,
-              headers: mergedHeaders,
-            ),
-          );
-        }
-        debugPrint('[PlayerService] Streaming audio for: ${song.title}');
-        return;
-      } catch (e) {
-        debugPrint('[PlayerService] Stream playback failed, fallback: $e');
+    final resolvedStreamUrl = (streamUrl ?? song.streamUrl ?? '').trim();
+    if (resolvedStreamUrl.isEmpty) {
+      if (_isActiveLoad(loadGeneration)) {
+        _playbackStateNotifier.value = PlayerPlaybackState.error;
       }
+      throw StateError('No playable stream URL available for "${song.title}"');
     }
 
     try {
-      await _loadSongWithYoutubeIFrame(song);
+      _playbackStateNotifier.value = PlayerPlaybackState.loading;
+      final mergedHeaders = _buildStreamHeaders(streamHeaders);
+      final uri = Uri.parse(resolvedStreamUrl);
+
+      await _audioPlayer.setAudioSource(
+        AudioSource.uri(
+          uri,
+          headers: mergedHeaders,
+          tag: _buildMediaItem(song, uri.toString()),
+        ),
+      );
+      if (!_isActiveLoad(loadGeneration)) return;
+
+      await _audioPlayer.play();
+      if (!_isActiveLoad(loadGeneration)) return;
+
+      if (!kIsWeb && cacheKey.isNotEmpty) {
+        unawaited(
+          _cache.cacheInBackground(
+            cacheKey,
+            resolvedStreamUrl,
+            headers: mergedHeaders,
+          ),
+        );
+      }
+
+      debugPrint('[PlayerService] Streaming audio for: ${song.title}');
     } catch (e) {
-      debugPrint('[PlayerService] Load song error: $e');
+      if (_isActiveLoad(loadGeneration)) {
+        _playbackStateNotifier.value = PlayerPlaybackState.error;
+      }
+      debugPrint('[PlayerService] Stream playback failed: $e');
       rethrow;
     }
   }
 
   Future<void> play() async {
     try {
-      if (_usingAudioEngine) {
-        await _audioPlayer.play();
-      } else {
-        if (_controller == null) {
-          debugPrint('[PlayerService] No controller available');
-          return;
-        }
-        await _controller!.playVideo();
+      if (_audioPlayer.audioSource == null) {
+        debugPrint('[PlayerService] No audio source loaded');
+        return;
       }
+
+      await _audioPlayer.play();
       debugPrint('[PlayerService] Play requested');
     } catch (e) {
       debugPrint('[PlayerService] Play error: $e');
@@ -458,15 +264,7 @@ class PlayerService {
 
   Future<void> pause() async {
     try {
-      if (_usingAudioEngine) {
-        await _audioPlayer.pause();
-      } else {
-        if (_controller == null) {
-          debugPrint('[PlayerService] No controller available');
-          return;
-        }
-        await _controller!.pauseVideo();
-      }
+      await _audioPlayer.pause();
       debugPrint('[PlayerService] Pause requested');
     } catch (e) {
       debugPrint('[PlayerService] Pause error: $e');
@@ -475,11 +273,7 @@ class PlayerService {
 
   Future<void> stop() async {
     try {
-      if (_usingAudioEngine) {
-        await _audioPlayer.stop();
-      } else if (_controller != null) {
-        await _controller!.stopVideo();
-      }
+      await _audioPlayer.stop();
     } catch (e) {
       debugPrint('[PlayerService] Stop error: $e');
     }
@@ -487,7 +281,7 @@ class PlayerService {
     _isReady = false;
     _playingNotifier.value = false;
     _readyNotifier.value = false;
-    _playerStateNotifier.value = yt.PlayerState.unknown;
+    _playbackStateNotifier.value = PlayerPlaybackState.idle;
     _positionNotifier.value = Duration.zero;
     debugPrint('[PlayerService] Stopped');
   }
@@ -495,16 +289,11 @@ class PlayerService {
   Future<void> seekToFraction(double fraction) async {
     try {
       Duration duration = _durationNotifier.value;
+
       if (duration <= Duration.zero) {
-        if (_usingAudioEngine) {
-          final dur = _audioPlayer.duration;
-          if (dur != null) {
-            duration = dur;
-          }
-        } else {
-          if (_controller == null) return;
-          final seconds = await _controller!.duration;
-          duration = Duration(milliseconds: (seconds * 1000).round());
+        final dur = _audioPlayer.duration;
+        if (dur != null) {
+          duration = dur;
         }
 
         if (duration > Duration.zero) {
@@ -519,13 +308,7 @@ class PlayerService {
         milliseconds: (duration.inMilliseconds * clampedFraction).round(),
       );
 
-      if (_usingAudioEngine) {
-        await _audioPlayer.seek(target);
-      } else {
-        if (_controller == null) return;
-        final double targetSeconds = target.inMilliseconds / 1000.0;
-        await _controller!.seekTo(seconds: targetSeconds, allowSeekAhead: true);
-      }
+      await _audioPlayer.seek(target);
 
       _positionNotifier.value = target;
     } catch (e) {
@@ -540,30 +323,17 @@ class PlayerService {
   }
 
   Future<void> disposePlayer() async {
-    await _controllerStateSubscription?.cancel();
-    await _videoStateSubscription?.cancel();
     await _audioStateSubscription?.cancel();
     await _audioPositionSubscription?.cancel();
     await _audioDurationSubscription?.cancel();
-    _controllerStateSubscription = null;
-    _videoStateSubscription = null;
     _audioStateSubscription = null;
     _audioPositionSubscription = null;
     _audioDurationSubscription = null;
 
-    if (_controller != null) {
-      await _controller!.close();
-      _controller = null;
-    }
     await _audioPlayer.dispose();
   }
 
   // Getters
-  yt.YoutubePlayerController? get controller {
-    _ensureController();
-    return _controller;
-  }
-
   Song? get currentSong => _currentSong;
   bool get isPlaying => _isPlaying;
   bool get isReady => _isReady;
@@ -573,7 +343,8 @@ class PlayerService {
   // UI streams for reactive updates
   ValueNotifier<bool> get playingNotifier => _playingNotifier;
   ValueNotifier<bool> get readyNotifier => _readyNotifier;
-  ValueNotifier<yt.PlayerState> get playerStateNotifier => _playerStateNotifier;
+  ValueNotifier<PlayerPlaybackState> get playbackStateNotifier =>
+      _playbackStateNotifier;
   ValueNotifier<Duration> get positionNotifier => _positionNotifier;
   ValueNotifier<Duration> get durationNotifier => _durationNotifier;
 

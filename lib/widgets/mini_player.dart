@@ -14,8 +14,7 @@ class MiniPlayer extends StatefulWidget {
   State<MiniPlayer> createState() => _MiniPlayerState();
 }
 
-class _MiniPlayerState extends State<MiniPlayer>
-    with SingleTickerProviderStateMixin {
+class _MiniPlayerState extends State<MiniPlayer> {
   bool _isPlaying = false;
   bool _isLiked = false;
   double _progress = 0.0;
@@ -72,6 +71,8 @@ class _MiniPlayerState extends State<MiniPlayer>
   }
 
   void _togglePlay() {
+    if (widget.currentSong == null) return;
+
     if (_isPlaying) {
       _player.pause();
     } else {
@@ -253,7 +254,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                           size: 20,
                         ),
                       ),
-                      onPressed: _togglePlay,
+                      onPressed: song != null ? _togglePlay : null,
                       padding: EdgeInsets.zero,
                     ),
                   ),

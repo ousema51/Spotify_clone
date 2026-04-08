@@ -1,9 +1,7 @@
+import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart'
-    show PlayerState, YoutubePlayer;
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
@@ -49,21 +47,22 @@ class _MainScreenState extends State<MainScreen> {
   BrowseView _browseView = BrowseView.none;
   String? _activeArtistId;
   String? _activeAlbumId;
+  int _loadRequestNonce = 0;
 
   @override
   void initState() {
     super.initState();
-    _player.playerStateNotifier.addListener(_onPlayerStateChanged);
+    _player.playbackStateNotifier.addListener(_onPlayerStateChanged);
   }
 
   @override
   void dispose() {
-    _player.playerStateNotifier.removeListener(_onPlayerStateChanged);
+    _player.playbackStateNotifier.removeListener(_onPlayerStateChanged);
     super.dispose();
   }
 
   void _onPlayerStateChanged() {
-    if (_player.playerStateNotifier.value == PlayerState.ended) {
+    if (_player.playbackStateNotifier.value == PlayerPlaybackState.completed) {
       _handleTrackEnded();
     }
   }
@@ -84,7 +83,8 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     setState(() => _currentSong = song);
-    _loadAndPlay(song);
+    final loadRequestId = ++_loadRequestNonce;
+    unawaited(_loadAndPlay(song, loadRequestId: loadRequestId));
     _trackListen(song);
   }
 
@@ -109,138 +109,176 @@ class _MainScreenState extends State<MainScreen> {
     return headers.isEmpty ? null : headers;
   }
 
-  Future<void> _loadSongForCurrentPlatform(Song song) async {
-    if (kIsWeb) {
-      await _player.loadSong(song);
-      return;
-    }
+  String _buildPlaybackHint(Song song) {
+    final hint = '${song.title} ${song.artist ?? ''}'.trim();
+    return hint.isEmpty ? song.title : hint;
+  }
 
-    final streamData = await _musicService.getStreamDataWithHint(
-      song.id,
-      song.title,
+  int _nextLoadRequestId() => ++_loadRequestNonce;
+
+  bool _isStaleLoadRequest(int requestId) => requestId != _loadRequestNonce;
+
+  Song _mergeResolvedCandidate(Song original, Song candidate) {
+    return Song(
+      id: candidate.id,
+      title: original.title.isNotEmpty ? original.title : candidate.title,
+      artist: original.artist ?? candidate.artist,
+      artists: original.artists ?? candidate.artists,
+      albumName: original.albumName ?? candidate.albumName,
+      coverUrl: original.coverUrl ?? candidate.coverUrl,
+      duration: original.duration ?? candidate.duration,
+      streamUrl: original.streamUrl ?? candidate.streamUrl,
+      albumId: original.albumId ?? candidate.albumId,
     );
-    final streamUrl = streamData?['audio_url']?.toString();
+  }
+
+  Future<bool> _loadSongFromStream(
+    Song song, {
+    required int loadRequestId,
+  }) async {
+    if (_isStaleLoadRequest(loadRequestId)) return false;
+
+    final streamData = await _musicService
+        .getStreamDataWithHint(song.id, _buildPlaybackHint(song))
+        .timeout(const Duration(seconds: 12));
+
+    if (_isStaleLoadRequest(loadRequestId)) return false;
+
+    final streamUrl = streamData?['audio_url']?.toString().trim();
     final streamHeaders = _buildStreamHeaders(streamData?['headers']);
+
+    if (streamUrl == null || streamUrl.isEmpty) {
+      throw StateError('No playable stream found for "${song.title}"');
+    }
 
     await _player.loadSong(
       song,
       streamUrl: streamUrl,
       streamHeaders: streamHeaders,
     );
+
+    return !_isStaleLoadRequest(loadRequestId);
   }
 
-  bool _isValidYoutubeVideoId(String value) {
-    return RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(value);
+  List<String> _buildFallbackQueries(Song song) {
+    final artist = (song.artist ?? '').trim();
+    final title = song.title.trim();
+    final album = (song.albumName ?? '').trim();
+
+    final queries = <String>[
+      _buildPlaybackHint(song),
+      title,
+      if (artist.isNotEmpty) '$artist $title',
+      if (album.isNotEmpty) '$artist $title $album',
+      '$title official audio',
+    ];
+
+    final seen = <String>{};
+    return queries
+        .map((q) => q.trim())
+        .where((q) => q.isNotEmpty && seen.add(q.toLowerCase()))
+        .toList(growable: false);
   }
 
-  String? _extractYoutubeVideoId(String raw) {
-    final input = raw.trim();
-    if (input.isEmpty) return null;
-    if (_isValidYoutubeVideoId(input)) return input;
+  Future<void> _loadAndPlay(Song song, {int? loadRequestId}) async {
+    final requestId = loadRequestId ?? _nextLoadRequestId();
+    if (_isStaleLoadRequest(requestId)) return;
 
-    final uri = Uri.tryParse(input);
-    if (uri != null) {
-      final fromQuery = uri.queryParameters['v'];
-      if (fromQuery != null && _isValidYoutubeVideoId(fromQuery)) {
-        return fromQuery;
-      }
-
-      if (uri.pathSegments.isNotEmpty) {
-        final last = uri.pathSegments.last;
-        if (_isValidYoutubeVideoId(last)) {
-          return last;
-        }
-      }
-    }
-
-    final match = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(input);
-    return match?.group(1);
-  }
-
-  Song _songWithVideoId(Song base, String videoId, [Song? fallback]) {
-    return Song(
-      id: videoId,
-      title: base.title,
-      artist: base.artist ?? fallback?.artist,
-      artists: base.artists ?? fallback?.artists,
-      albumName: base.albumName ?? fallback?.albumName,
-      coverUrl: base.coverUrl ?? fallback?.coverUrl,
-      duration: base.duration ?? fallback?.duration,
-      streamUrl: null,
-      albumId: base.albumId ?? fallback?.albumId,
-    );
-  }
-
-  Future<Song?> _tryAlternateYoutubePlayback(Song original) async {
-    final query = '${original.title} ${original.artist ?? ''}'.trim();
-    if (query.isEmpty) return null;
-
-    final candidates = await _musicService.searchSongs(query);
-    if (candidates.isEmpty) return null;
-
-    final tried = <String>{};
-    final originalId = _extractYoutubeVideoId(original.id);
-    if (originalId != null) {
-      tried.add(originalId);
-    }
-
-    for (final candidate in candidates.take(8)) {
-      final candidateId = _extractYoutubeVideoId(candidate.id);
-      if (candidateId == null || tried.contains(candidateId)) {
-        continue;
-      }
-      tried.add(candidateId);
-
-      final fallbackSong = _songWithVideoId(original, candidateId, candidate);
-      try {
-        await _loadSongForCurrentPlatform(fallbackSong);
-        debugPrint(
-          '[MainScreen] Alternate playback succeeded with id: $candidateId',
-        );
-        return fallbackSong;
-      } catch (e) {
-        debugPrint(
-          '[MainScreen] Alternate playback failed for $candidateId: $e',
-        );
-      }
-    }
-
-    return null;
-  }
-
-  Future<void> _loadAndPlay(Song song) async {
-    // song.id is the YouTube videoId from search results
     debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
 
-    // Web uses iframe playback while Android/iOS prefer native streaming.
-    try {
-      await _loadSongForCurrentPlatform(song);
-    } catch (e) {
-      debugPrint('[MainScreen] Primary playback failed: $e');
+    final attemptedIds = <String>{};
+    final primaryId = song.id.trim();
+    if (primaryId.isNotEmpty) {
+      attemptedIds.add(primaryId);
+    }
 
-      final alternateSong = await _tryAlternateYoutubePlayback(song);
-      if (alternateSong != null) {
-        if (mounted) {
-          setState(() {
-            _currentSong = alternateSong;
-            if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
-              if (_playQueue[_queueIndex].id == song.id) {
-                _playQueue[_queueIndex] = alternateSong;
+    try {
+      final loaded = await _loadSongFromStream(song, loadRequestId: requestId);
+      if (loaded) return;
+
+      if (_isStaleLoadRequest(requestId)) return;
+    } catch (e) {
+      debugPrint('[MainScreen] Primary playback attempt failed: $e');
+      if (_isStaleLoadRequest(requestId)) return;
+    }
+
+    final fallbackQueries = _buildFallbackQueries(song);
+    if (fallbackQueries.isNotEmpty) {
+      try {
+        final pooled = <Song>[];
+        for (final query in fallbackQueries) {
+          if (_isStaleLoadRequest(requestId)) return;
+
+          try {
+            final hits = await _musicService
+                .searchSongs(query)
+                .timeout(const Duration(seconds: 6));
+            for (final hit in hits) {
+              final candidateId = hit.id.trim();
+              if (candidateId.isEmpty || attemptedIds.contains(candidateId)) {
+                continue;
+              }
+              attemptedIds.add(candidateId);
+              pooled.add(hit);
+              if (pooled.length >= 30) break;
+            }
+            if (pooled.length >= 30) break;
+          } catch (searchError) {
+            debugPrint(
+              '[MainScreen] Fallback search query failed ($query): $searchError',
+            );
+          }
+        }
+
+        for (final candidate in pooled) {
+          if (_isStaleLoadRequest(requestId)) return;
+
+          final resolvedSong = _mergeResolvedCandidate(song, candidate);
+          try {
+            final loaded = await _loadSongFromStream(
+              resolvedSong,
+              loadRequestId: requestId,
+            );
+            if (!loaded) return;
+
+            if (mounted) {
+              setState(() {
+                _currentSong = resolvedSong;
+                if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
+                  _playQueue[_queueIndex] = resolvedSong;
+                }
+              });
+            } else {
+              _currentSong = resolvedSong;
+              if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
+                _playQueue[_queueIndex] = resolvedSong;
               }
             }
-          });
-        }
-        return;
-      }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Playback error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+            debugPrint(
+              '[MainScreen] Playback recovered with fallback ID: ${candidate.id}',
+            );
+            return;
+          } catch (innerError) {
+            if (_isStaleLoadRequest(requestId)) return;
+            debugPrint(
+              '[MainScreen] Fallback candidate failed (${candidate.title}/${candidate.id}): $innerError',
+            );
+          }
+        }
+      } catch (searchError) {
+        if (_isStaleLoadRequest(requestId)) return;
+        debugPrint('[MainScreen] Fallback search failed: $searchError');
       }
+    }
+
+    if (mounted && !_isStaleLoadRequest(requestId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Playback error: unable to resolve a playable stream'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -455,17 +493,26 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _openLogin() {
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).pushNamedAndRemoveUntil('/login', (route) => false);
+  }
+
   Future<void> _logout() async {
-    await _authService.logout();
+    try {
+      await _authService.logout();
+    } catch (_) {
+      // Always route to login even if remote logout fails.
+    }
     if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
+      _openLogin();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final ytController = _player.controller;
-
     final Widget libraryContent;
     if (_libraryView == LibraryView.playlist && _activePlaylistId != null) {
       libraryContent = PlaylistDetailScreen(
@@ -520,20 +567,6 @@ class _MainScreenState extends State<MainScreen> {
 
     return Stack(
       children: [
-        if (kIsWeb && ytController != null)
-          IgnorePointer(
-            child: Opacity(
-              opacity: 0.01,
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: SizedBox(
-                  width: 180,
-                  height: 120,
-                  child: YoutubePlayer(controller: ytController),
-                ),
-              ),
-            ),
-          ),
         Scaffold(
           appBar: _selectedIndex == 0
               ? AppBar(
@@ -554,8 +587,7 @@ class _MainScreenState extends State<MainScreen> {
                           );
                         }
                         return TextButton(
-                          onPressed: () =>
-                              Navigator.pushNamed(context, '/login'),
+                          onPressed: _openLogin,
                           child: const Text(
                             'Log In',
                             style: TextStyle(color: Color(0xFF0B3B8C)),

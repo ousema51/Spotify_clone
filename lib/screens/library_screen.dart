@@ -68,8 +68,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF282828),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Text('New Playlist'),
           content: TextField(
             onChanged: (value) => newName = value,
@@ -89,8 +90,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text('Cancel',
-                  style: TextStyle(color: Colors.grey[400])),
+              child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
             ),
             TextButton(
               onPressed: () {
@@ -99,8 +99,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 }
                 Navigator.pop(context);
               },
-                child: const Text('Add',
-                  style: TextStyle(color: Color(0xFF0B3B8C))),
+              child: const Text(
+                'Add',
+                style: TextStyle(color: Color(0xFF0B3B8C)),
+              ),
             ),
           ],
         );
@@ -120,7 +122,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message']?.toString() ?? 'Could not create playlist'),
+            content: Text(
+              result['message']?.toString() ?? 'Could not create playlist',
+            ),
             backgroundColor: Colors.red[700],
           ),
         );
@@ -153,8 +157,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               children: [
                 const Text(
                   'Your Library',
-                  style: TextStyle(
-                      fontSize: 26, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                 ),
                 if (_isLoggedIn)
                   IconButton(
@@ -167,8 +170,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             if (_isLoading)
               const Expanded(
                 child: Center(
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF0B3B8C)),
+                  child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
                 ),
               )
             else if (!_isLoggedIn)
@@ -177,18 +179,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.library_music_rounded,
-                          color: Colors.grey[600], size: 60),
+                      Icon(
+                        Icons.library_music_rounded,
+                        color: Colors.grey[600],
+                        size: 60,
+                      ),
                       const SizedBox(height: 16),
                       const Text(
                         'Log in to view your library',
-                        style:
-                            TextStyle(color: Colors.grey, fontSize: 16),
+                        style: TextStyle(color: Colors.grey, fontSize: 16),
                       ),
                       const SizedBox(height: 20),
                       ElevatedButton(
-                        onPressed: () =>
-                            Navigator.pushNamed(context, '/login'),
+                        onPressed: () => Navigator.of(
+                          context,
+                          rootNavigator: true,
+                        ).pushNamedAndRemoveUntil('/login', (route) => false),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF0B3B8C),
                           foregroundColor: Colors.white,
@@ -214,78 +220,90 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         margin: const EdgeInsets.only(bottom: 4),
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 4),
+                            horizontal: 4,
+                            vertical: 4,
+                          ),
                           leading: Container(
                             width: 52,
                             height: 52,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(6),
                               gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFF7B4FFF),
-                                  Color(0xFF0B3B8C)
-                                ],
+                                colors: [Color(0xFF7B4FFF), Color(0xFF0B3B8C)],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
                             ),
-                            child: const Icon(Icons.favorite_rounded,
-                                color: Colors.white, size: 24),
+                            child: const Icon(
+                              Icons.favorite_rounded,
+                              color: Colors.white,
+                              size: 24,
+                            ),
                           ),
                           title: const Text(
                             'Liked Songs',
                             style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15),
+                              fontWeight: FontWeight.w500,
+                              fontSize: 15,
+                            ),
                           ),
                           subtitle: Text(
                             'Playlist - ${_likedSongs.length} songs',
                             style: TextStyle(
-                                color: Colors.grey[500], fontSize: 13),
+                              color: Colors.grey[500],
+                              fontSize: 13,
+                            ),
                           ),
                           onTap: widget.onOpenLikedSongs,
                         ),
                       ),
 
                       // User playlists
-                          ..._playlists.map((playlist) => Container(
-                            margin: const EdgeInsets.only(bottom: 4),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 4, vertical: 4),
-                              leading: Container(
-                                width: 52,
-                                height: 52,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(6),
-                                  color: const Color(0xFF282828),
-                                ),
-                                child: const Icon(
-                                    Icons.music_note_rounded,
-                                    color: Colors.white,
-                                    size: 24),
-                              ),
-                              title: Text(
-                                (playlist['name'] ?? 'Untitled Playlist')
-                                    .toString(),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w500,
-                                    fontSize: 15),
-                              ),
-                              subtitle: Text(
-                                'Playlist - ${_playlistSongCount(playlist)} songs',
-                                style: TextStyle(
-                                    color: Colors.grey[500],
-                                    fontSize: 13),
-                              ),
-                              onTap: () {
-                                final playlistId =
-                                    (playlist['_id'] ?? '').toString();
-                                if (playlistId.isEmpty) return;
-                                widget.onOpenPlaylist(playlistId);
-                              },
+                      ..._playlists.map(
+                        (playlist) => Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 4,
                             ),
-                          )),
+                            leading: Container(
+                              width: 52,
+                              height: 52,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                color: const Color(0xFF282828),
+                              ),
+                              child: const Icon(
+                                Icons.music_note_rounded,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            ),
+                            title: Text(
+                              (playlist['name'] ?? 'Untitled Playlist')
+                                  .toString(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 15,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Playlist - ${_playlistSongCount(playlist)} songs',
+                              style: TextStyle(
+                                color: Colors.grey[500],
+                                fontSize: 13,
+                              ),
+                            ),
+                            onTap: () {
+                              final playlistId = (playlist['_id'] ?? '')
+                                  .toString();
+                              if (playlistId.isEmpty) return;
+                              widget.onOpenPlaylist(playlistId);
+                            },
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -296,4 +314,3 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 }
-
