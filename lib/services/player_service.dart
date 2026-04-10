@@ -14,8 +14,16 @@ class PlayerService {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final ValueNotifier<PlayerPlaybackState> playbackStateNotifier =
       ValueNotifier(PlayerPlaybackState.idle);
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> durationNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> bufferedPositionNotifier = ValueNotifier(
+    Duration.zero,
+  );
 
   StreamSubscription<PlayerState>? _stateSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration?>? _durationSubscription;
+  StreamSubscription<Duration>? _bufferedPositionSubscription;
   Song? _currentSong;
 
   PlayerService._internal() {
@@ -25,6 +33,20 @@ class PlayerService {
         playbackStateNotifier.value = PlayerPlaybackState.error;
       },
     );
+
+    _positionSubscription = _audioPlayer.positionStream.listen((position) {
+      positionNotifier.value = position;
+    });
+
+    _durationSubscription = _audioPlayer.durationStream.listen((duration) {
+      durationNotifier.value = duration ?? Duration.zero;
+    });
+
+    _bufferedPositionSubscription = _audioPlayer.bufferedPositionStream.listen((
+      buffered,
+    ) {
+      bufferedPositionNotifier.value = buffered;
+    });
   }
 
   Song? get currentSong => _currentSong;
@@ -43,10 +65,9 @@ class PlayerService {
         playbackStateNotifier.value = PlayerPlaybackState.loading;
         break;
       case ProcessingState.ready:
-        playbackStateNotifier.value =
-            state.playing
-                ? PlayerPlaybackState.playing
-                : PlayerPlaybackState.paused;
+        playbackStateNotifier.value = state.playing
+            ? PlayerPlaybackState.playing
+            : PlayerPlaybackState.paused;
         break;
       case ProcessingState.completed:
         playbackStateNotifier.value = PlayerPlaybackState.completed;
@@ -83,6 +104,8 @@ class PlayerService {
 
     _currentSong = song;
     playbackStateNotifier.value = PlayerPlaybackState.loading;
+    positionNotifier.value = Duration.zero;
+    bufferedPositionNotifier.value = Duration.zero;
 
     final source = AudioSource.uri(
       Uri.parse(trimmedUrl),
@@ -105,14 +128,32 @@ class PlayerService {
     await _audioPlayer.pause();
   }
 
+  Future<void> seek(Duration position) async {
+    if (_audioPlayer.audioSource == null) {
+      return;
+    }
+
+    await _audioPlayer.seek(position);
+  }
+
   Future<void> stop() async {
     await _audioPlayer.stop();
+    _currentSong = null;
+    positionNotifier.value = Duration.zero;
+    bufferedPositionNotifier.value = Duration.zero;
+    durationNotifier.value = Duration.zero;
     playbackStateNotifier.value = PlayerPlaybackState.idle;
   }
 
   Future<void> disposePlayer() async {
     await _stateSubscription?.cancel();
+    await _positionSubscription?.cancel();
+    await _durationSubscription?.cancel();
+    await _bufferedPositionSubscription?.cancel();
     await _audioPlayer.dispose();
+    positionNotifier.dispose();
+    durationNotifier.dispose();
+    bufferedPositionNotifier.dispose();
     playbackStateNotifier.dispose();
   }
 }

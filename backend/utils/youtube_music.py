@@ -515,7 +515,7 @@ def _get_rapidapi_host():
 def _get_rapidapi_url():
     return (
         os.environ.get("YTDLP_RAPIDAPI_URL")
-        or "https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=false"
+        or "https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=true"
     ).strip()
 
 
@@ -1406,82 +1406,26 @@ def get_stream_url(video_id=""):
     if cached:
         return {"success": True, "data": cached}
 
-    local_result = {"success": False, "message": "local yt-dlp not attempted"}
-    external_result = {"success": False, "message": "external yt-dlp not attempted"}
+    if not _external_ytdlp_api_enabled():
+        return {
+            "success": False,
+            "error_code": "external_disabled",
+            "message": "External provider mode is required (youtube-mp3-audio-video-downloader)",
+        }
 
-    if _external_ytdlp_api_enabled():
-        external_result = _resolve_stream_from_external_api(resolved_id)
-        if external_result.get("success"):
-            data = external_result.get("data") or {}
-            if not data.get("video_id"):
-                data["video_id"] = resolved_id
-            _stream_cache_set(resolved_id, data)
-            external_result["data"] = data
-            return external_result
-
-        should_try_local = _allow_local_ytdlp_fallback()
-        if external_result.get("error_code") in (
-            "external_request_not_found",
-            "external_conversion_error",
-            "external_pending",
-            "external_status_unavailable",
-        ):
-            # For request-id based providers, conversion errors, or pending jobs, try local extraction.
-            should_try_local = True
-
-        if should_try_local:
-            target = "https://www.youtube.com/watch?v={}".format(resolved_id)
-            local_result = _resolve_stream_from_yt_dlp(target, from_search=False)
-    else:
-        target = "https://www.youtube.com/watch?v={}".format(resolved_id)
-        local_result = _resolve_stream_from_yt_dlp(target, from_search=False)
-
-    if local_result.get("success"):
-        data = local_result.get("data") or {}
+    external_result = _resolve_stream_from_external_api(resolved_id)
+    if external_result.get("success"):
+        data = external_result.get("data") or {}
         if not data.get("video_id"):
             data["video_id"] = resolved_id
         _stream_cache_set(resolved_id, data)
-        local_result["data"] = data
-        return local_result
-
-    if local_result.get("error_code") == "bot_challenge":
-        stale = _stream_cache_get(resolved_id, allow_stale=True)
-        if stale:
-            return {
-                "success": True,
-                "data": stale,
-                "message": "Using stale cached stream URL due to temporary YouTube challenge",
-            }
-
-    piped_result = _resolve_stream_from_piped(resolved_id)
-    if piped_result.get("success"):
-        data = piped_result.get("data") or {}
-        if not data.get("video_id"):
-            data["video_id"] = resolved_id
-        _stream_cache_set(resolved_id, data)
-        piped_result["data"] = data
-        return piped_result
-
-    attempted_messages = []
-    if _external_ytdlp_api_enabled():
-        attempted_messages.append(
-            "external api error: {}".format(external_result.get("message", "unknown"))
-        )
-    if local_result.get("message") and local_result.get("message") != "local yt-dlp not attempted":
-        attempted_messages.append("local yt-dlp error: {}".format(local_result.get("message")))
-    attempted_messages.append(
-        "piped fallback error: {}".format(piped_result.get("message", "unknown"))
-    )
-
-    error_code = local_result.get("error_code") or external_result.get("error_code")
-    message = "; ".join(attempted_messages)
-    if not message:
-        message = "Failed to resolve stream URL"
+        external_result["data"] = data
+        return external_result
 
     return {
         "success": False,
-        "error_code": error_code,
-        "message": message,
+        "error_code": external_result.get("error_code") or "external_request_failed",
+        "message": external_result.get("message") or "Failed to resolve stream URL from external provider",
     }
 
 
@@ -1490,28 +1434,10 @@ def get_stream_from_search(query=""):
     if not query:
         return {"success": False, "message": "No query provided"}
 
-    # In external mode, avoid local yt-dlp search extraction on serverless hosts.
-    if _external_ytdlp_api_enabled() and not _allow_local_ytdlp_fallback():
-        search_result = search_songs(query, page=1, limit=1)
-        if search_result.get("success"):
-            songs = search_result.get("data") or []
-            if songs:
-                first_id = _extract_video_id((songs[0] or {}).get("id"))
-                if first_id:
-                    return get_stream_url(first_id)
-        return {
-            "success": False,
-            "message": "Failed to resolve stream from search in external API mode",
-        }
+    direct_id = _extract_video_id(query)
+    if direct_id:
+        return get_stream_url(direct_id)
 
-    ytdlp_result = _resolve_stream_from_yt_dlp(
-        "ytsearch8:{}".format(query),
-        from_search=True,
-    )
-    if ytdlp_result.get("success"):
-        return ytdlp_result
-
-    # Fallback: resolve first search hit by id.
     search_result = search_songs(query, page=1, limit=1)
     if search_result.get("success"):
         songs = search_result.get("data") or []
@@ -1522,7 +1448,7 @@ def get_stream_from_search(query=""):
 
     return {
         "success": False,
-        "message": "Failed to resolve stream from search",
+        "message": "Failed to resolve stream from search using external provider",
     }
 
 
