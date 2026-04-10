@@ -88,6 +88,74 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         mocked_local.assert_not_called()
         mocked_piped.assert_not_called()
 
+    def test_get_stream_url_uses_piped_fallback_on_region_restriction(self):
+        external_failure = {
+            "success": False,
+            "error_code": "external_http_error",
+            "status_code": 406,
+            "message": "Unable to download video due to regional restrictions",
+        }
+        piped_success = {
+            "success": True,
+            "data": {
+                "audio_url": "https://piped.example/audio.webm",
+                "headers": {},
+                "video_id": "GwrLUr01NOY",
+                "source": "piped",
+            },
+        }
+
+        with patch.dict(os.environ, {"YTDLP_PROVIDER": "rapidapi", "YTDLP_RAPIDAPI_KEY": "key"}, clear=False):
+            with patch.object(youtube_music, "_resolve_stream_from_external_api", return_value=external_failure):
+                with patch.object(youtube_music, "_resolve_stream_from_piped", return_value=piped_success) as mocked_piped:
+                    with patch.object(youtube_music, "_resolve_stream_from_yt_dlp") as mocked_local:
+                        result = youtube_music.get_stream_url("GwrLUr01NOY")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["audio_url"], "https://piped.example/audio.webm")
+        self.assertEqual(result["data"].get("fallback_reason"), "regional_restriction")
+        self.assertEqual(result["data"].get("fallback_source"), "piped")
+        mocked_piped.assert_called_once()
+        mocked_local.assert_not_called()
+
+    def test_get_stream_from_search_skips_region_restricted_candidate(self):
+        with patch.object(
+            youtube_music,
+            "search_songs",
+            return_value={
+                "success": True,
+                "data": [
+                    {"id": "GwrLUr01NOY", "title": "Blocked Candidate"},
+                    {"id": "Ckom3gf57Yw", "title": "Playable Candidate"},
+                ],
+            },
+        ):
+            with patch.object(
+                youtube_music,
+                "get_stream_url",
+                side_effect=[
+                    {
+                        "success": False,
+                        "error_code": "external_http_error",
+                        "status_code": 406,
+                        "message": "Unable to download video due to regional restrictions",
+                    },
+                    {
+                        "success": True,
+                        "data": {
+                            "audio_url": "https://cdn.example.com/ok.mp3",
+                            "video_id": "Ckom3gf57Yw",
+                            "source": "rapidapi-yt-dlp",
+                        },
+                    },
+                ],
+            ) as mocked_get_stream:
+                result = youtube_music.get_stream_from_search("query")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["video_id"], "Ckom3gf57Yw")
+        self.assertEqual(mocked_get_stream.call_count, 2)
+
     def test_get_stream_from_search_uses_search_then_external_by_id(self):
         with patch.object(
             youtube_music,

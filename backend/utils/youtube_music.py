@@ -1397,6 +1397,165 @@ def search_all(query=""):
     return search_songs(query)
 
 
+def _is_region_restriction_error(result):
+    if not isinstance(result, dict):
+        return False
+
+    status_code = _safe_int(result.get("status_code"))
+    if status_code == 406:
+        return True
+
+    error_code = (_safe_str(result.get("error_code")) or "").strip().lower()
+    if error_code in (
+        "external_http_406",
+        "external_geo_restricted",
+        "external_region_restricted",
+    ):
+        return True
+
+    message = (_safe_str(result.get("message")) or "").strip().lower()
+    if not message:
+        return False
+
+    if "status 406" in message:
+        return True
+
+    markers = (
+        "regional restrictions",
+        "regional restriction",
+        "region restricted",
+        "geo-restricted",
+        "geo restricted",
+        "not available in your country",
+        "blocked in your country",
+        "this video is not available in your region",
+    )
+    return any(marker in message for marker in markers)
+
+
+def _build_search_query_from_video_id(video_id):
+    song_meta = get_song_by_id(video_id)
+    if not isinstance(song_meta, dict) or song_meta.get("success") is False:
+        return ""
+
+    data = song_meta.get("data")
+    if not isinstance(data, dict):
+        return ""
+
+    title = (_safe_str(data.get("title")) or "").strip()
+    artist = (_safe_str(data.get("artist")) or "").strip()
+
+    if title.lower().startswith("unknown title"):
+        title = ""
+    if artist.lower() == "unknown artist":
+        artist = ""
+
+    return "{} {}".format(artist, title).strip()
+
+
+def _tag_fallback_payload(result, fallback_video_id, fallback_source):
+    if not isinstance(result, dict):
+        return result
+
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return result
+
+    tagged = dict(data)
+    tagged.setdefault("video_id", fallback_video_id)
+    tagged["fallback_reason"] = "regional_restriction"
+    tagged["fallback_video_id"] = fallback_video_id
+    tagged["fallback_source"] = fallback_source
+
+    wrapped = dict(result)
+    wrapped["data"] = tagged
+    return wrapped
+
+
+def _resolve_region_restriction_fallback(video_id):
+    resolved_id = _extract_video_id(video_id)
+    if not resolved_id:
+        return {
+            "success": False,
+            "error_code": "invalid_video_id",
+            "message": "Invalid video_id",
+        }
+
+    piped_result = _resolve_stream_from_piped(resolved_id)
+    if piped_result.get("success"):
+        return _tag_fallback_payload(piped_result, resolved_id, "piped")
+
+    if _allow_local_ytdlp_fallback():
+        local_target = "https://www.youtube.com/watch?v={}".format(resolved_id)
+        local_result = _resolve_stream_from_yt_dlp(local_target, from_search=False)
+        if local_result.get("success"):
+            return _tag_fallback_payload(local_result, resolved_id, "local_yt_dlp")
+
+    query = _build_search_query_from_video_id(resolved_id)
+    if not query:
+        return {
+            "success": False,
+            "error_code": "regional_fallback_unavailable",
+            "message": "Could not build a fallback query for this region-restricted video",
+        }
+
+    search_result = search_songs(query, page=1, limit=8)
+    if not search_result.get("success"):
+        return {
+            "success": False,
+            "error_code": search_result.get("error_code") or "regional_fallback_search_failed",
+            "message": search_result.get("message") or "Fallback search failed",
+        }
+
+    seen = set([resolved_id])
+    candidate_ids = []
+    for item in search_result.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = _extract_video_id(item.get("id"))
+        if not candidate_id or candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        candidate_ids.append(candidate_id)
+
+    if not candidate_ids:
+        return {
+            "success": False,
+            "error_code": "regional_fallback_no_candidates",
+            "message": "No alternative candidates found for region-restricted video",
+        }
+
+    last_error = None
+    for candidate_id in candidate_ids:
+        external_result = _resolve_stream_from_external_api(candidate_id)
+        if external_result.get("success"):
+            return _tag_fallback_payload(external_result, candidate_id, "external_alternative")
+        last_error = external_result
+
+        piped_candidate = _resolve_stream_from_piped(candidate_id)
+        if piped_candidate.get("success"):
+            return _tag_fallback_payload(piped_candidate, candidate_id, "piped_alternative")
+
+        if _allow_local_ytdlp_fallback():
+            local_target = "https://www.youtube.com/watch?v={}".format(candidate_id)
+            local_result = _resolve_stream_from_yt_dlp(local_target, from_search=False)
+            if local_result.get("success"):
+                return _tag_fallback_payload(local_result, candidate_id, "local_alternative")
+
+    if isinstance(last_error, dict) and last_error.get("message"):
+        return {
+            "success": False,
+            "error_code": last_error.get("error_code") or "regional_fallback_failed",
+            "message": "All regional fallbacks failed: {}".format(last_error.get("message")),
+        }
+
+    return {
+        "success": False,
+        "error_code": "regional_fallback_failed",
+        "message": "Unable to resolve a playable alternative for this region-restricted video",
+    }
+
+
 def get_stream_url(video_id=""):
     resolved_id = _extract_video_id(video_id)
     if not resolved_id:
@@ -1422,6 +1581,23 @@ def get_stream_url(video_id=""):
         external_result["data"] = data
         return external_result
 
+    if _is_region_restriction_error(external_result):
+        fallback_result = _resolve_region_restriction_fallback(resolved_id)
+        if fallback_result.get("success"):
+            data = fallback_result.get("data") or {}
+            if not data.get("video_id"):
+                data["video_id"] = resolved_id
+            _stream_cache_set(resolved_id, data)
+            fallback_result["data"] = data
+            return fallback_result
+
+        fallback_message = fallback_result.get("message") if isinstance(fallback_result, dict) else None
+        return {
+            "success": False,
+            "error_code": fallback_result.get("error_code") if isinstance(fallback_result, dict) else external_result.get("error_code") or "external_request_failed",
+            "message": fallback_message or external_result.get("message") or "Failed to resolve stream URL from external provider",
+        }
+
     return {
         "success": False,
         "error_code": external_result.get("error_code") or "external_request_failed",
@@ -1438,13 +1614,30 @@ def get_stream_from_search(query=""):
     if direct_id:
         return get_stream_url(direct_id)
 
-    search_result = search_songs(query, page=1, limit=1)
+    search_result = search_songs(query, page=1, limit=8)
     if search_result.get("success"):
         songs = search_result.get("data") or []
         if songs:
-            first_id = _extract_video_id((songs[0] or {}).get("id"))
-            if first_id:
-                return get_stream_url(first_id)
+            last_error = None
+            for item in songs:
+                if not isinstance(item, dict):
+                    continue
+
+                candidate_id = _extract_video_id(item.get("id"))
+                if not candidate_id:
+                    continue
+
+                candidate_result = get_stream_url(candidate_id)
+                if candidate_result.get("success"):
+                    return candidate_result
+                last_error = candidate_result
+
+            if isinstance(last_error, dict) and last_error.get("message"):
+                return {
+                    "success": False,
+                    "error_code": last_error.get("error_code") or "external_request_failed",
+                    "message": last_error.get("message"),
+                }
 
     return {
         "success": False,

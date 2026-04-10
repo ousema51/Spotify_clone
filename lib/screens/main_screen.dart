@@ -832,6 +832,12 @@ class _MainScreenState extends State<MainScreen> {
                       ? Icons.repeat_one_rounded
                       : Icons.repeat_rounded;
                   final repeatActive = _repeatMode != QueueRepeatMode.off;
+                  final rawArtistName = (song.artist ?? '').trim();
+                  final artistLabel = rawArtistName.isEmpty
+                    ? 'Unknown Artist'
+                    : rawArtistName;
+                  final canOpenArtist =
+                    artistLabel.toLowerCase() != 'unknown artist';
 
                   return Padding(
                     padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
@@ -910,16 +916,34 @@ class _MainScreenState extends State<MainScreen> {
                                             ),
                                           ),
                                           const SizedBox(height: 6),
-                                          Text(
-                                            song.artist ?? 'Unknown Artist',
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: Colors.white.withValues(
-                                                alpha: 0.86,
+                                          GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: canOpenArtist
+                                                ? () => unawaited(
+                                                    _openArtistFromSong(
+                                                      song,
+                                                      pageContext,
+                                                    ),
+                                                  )
+                                                : null,
+                                            child: Text(
+                                              artistLabel,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(
+                                                  alpha: canOpenArtist
+                                                      ? 0.92
+                                                      : 0.86,
+                                                ),
+                                                fontSize: 17,
+                                                fontWeight: FontWeight.w500,
+                                                decoration: canOpenArtist
+                                                    ? TextDecoration.underline
+                                                    : TextDecoration.none,
+                                                decorationColor: Colors.white
+                                                    .withValues(alpha: 0.75),
                                               ),
-                                              fontSize: 17,
-                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                           const SizedBox(height: 6),
@@ -1289,6 +1313,52 @@ class _MainScreenState extends State<MainScreen> {
       _activeArtistId = artistId;
       _browseView = BrowseView.artist;
     });
+  }
+
+  Future<void> _openArtistFromSong(
+    Song song,
+    BuildContext pageContext,
+  ) async {
+    final rawArtistName = (song.artist ?? '').trim();
+    final artistName = rawArtistName.isEmpty ? 'Unknown Artist' : rawArtistName;
+    if (artistName.toLowerCase() == 'unknown artist') {
+      _showPlaybackError('Artist page is unavailable for this song');
+      return;
+    }
+
+    try {
+      final artists = await _musicService.searchArtists(artistName);
+      if (!mounted) {
+        return;
+      }
+
+      if (artists.isEmpty) {
+        _showPlaybackError('Could not find artist page');
+        return;
+      }
+
+      final expected = artistName.toLowerCase();
+      var selected = artists.first;
+      for (final candidate in artists) {
+        if (candidate.name.trim().toLowerCase() == expected) {
+          selected = candidate;
+          break;
+        }
+      }
+
+      _openArtist(selected.id);
+      if (!pageContext.mounted) {
+        return;
+      }
+      if (Navigator.of(pageContext).canPop()) {
+        Navigator.of(pageContext).pop();
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      _showPlaybackError('Could not open artist page: $e');
+    }
   }
 
   void _openAlbum(String albumId) {
