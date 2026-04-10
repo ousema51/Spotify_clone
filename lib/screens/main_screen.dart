@@ -32,6 +32,7 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   Song? _currentSong;
   final ValueNotifier<Song?> _currentSongNotifier = ValueNotifier<Song?>(null);
+  final ValueNotifier<int> _fullPlayerUiRevision = ValueNotifier<int>(0);
   final AuthService _authService = AuthService();
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
@@ -57,6 +58,10 @@ class _MainScreenState extends State<MainScreen> {
   String? _activeArtistId;
   String? _activeAlbumId;
 
+  void _markFullPlayerUiDirty() {
+    _fullPlayerUiRevision.value = _fullPlayerUiRevision.value + 1;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -69,12 +74,14 @@ class _MainScreenState extends State<MainScreen> {
 
     if (song == null) {
       _isCurrentSongFavorite = false;
+      _markFullPlayerUiDirty();
       return;
     }
 
     final songId = song.id.trim();
     _isCurrentSongFavorite =
         songId.isNotEmpty && _favoriteSongIds.contains(songId);
+    _markFullPlayerUiDirty();
     unawaited(_loadFavoriteStateForSong(song));
   }
 
@@ -141,6 +148,7 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _isShuffleEnabled = !_isShuffleEnabled;
     });
+    _markFullPlayerUiDirty();
   }
 
   void _cycleRepeatMode() {
@@ -157,6 +165,7 @@ class _MainScreenState extends State<MainScreen> {
           break;
       }
     });
+    _markFullPlayerUiDirty();
   }
 
   String _repeatModeLabel() {
@@ -196,6 +205,7 @@ class _MainScreenState extends State<MainScreen> {
           _favoriteSongIds.remove(songId);
         }
       });
+      _markFullPlayerUiDirty();
     } catch (_) {
       if (!mounted || requestId != _favoriteStatusRequestNonce) {
         return;
@@ -231,6 +241,7 @@ class _MainScreenState extends State<MainScreen> {
         _favoriteSongIds.remove(songId);
       }
     });
+    _markFullPlayerUiDirty();
 
     try {
       final response = nextIsFavorite
@@ -249,6 +260,7 @@ class _MainScreenState extends State<MainScreen> {
             _favoriteSongIds.remove(songId);
           }
         });
+        _markFullPlayerUiDirty();
 
         final message =
             response['message']?.toString() ?? 'Failed to update favorites';
@@ -264,6 +276,7 @@ class _MainScreenState extends State<MainScreen> {
             _favoriteSongIds.remove(songId);
           }
         });
+        _markFullPlayerUiDirty();
       }
       _showPlaybackError('Failed to update favorites: $e');
     } finally {
@@ -271,6 +284,7 @@ class _MainScreenState extends State<MainScreen> {
         setState(() {
           _favoriteActionInFlight = false;
         });
+        _markFullPlayerUiDirty();
       }
     }
   }
@@ -811,241 +825,249 @@ class _MainScreenState extends State<MainScreen> {
                 );
               }
 
-              final repeatIcon = _repeatMode == QueueRepeatMode.song
-                  ? Icons.repeat_one_rounded
-                  : Icons.repeat_rounded;
-              final repeatActive = _repeatMode != QueueRepeatMode.off;
+              return ValueListenableBuilder<int>(
+                valueListenable: _fullPlayerUiRevision,
+                builder: (context, _, child) {
+                  final repeatIcon = _repeatMode == QueueRepeatMode.song
+                      ? Icons.repeat_one_rounded
+                      : Icons.repeat_rounded;
+                  final repeatActive = _repeatMode != QueueRepeatMode.off;
 
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-                child: Column(
-                  children: [
-                    Row(
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                    child: Column(
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.of(pageContext).maybePop(),
-                          icon: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
-                        const Expanded(
-                          child: Column(
-                            children: [
-                              Text(
-                                'NOW PLAYING',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                  letterSpacing: 1.1,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              SizedBox(height: 2),
-                              Text(
-                                'From your queue',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 48),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        Row(
                           children: [
-                            Center(
-                              child: _buildSongArtwork(
-                                song,
-                                size: artworkSize,
-                                borderRadius: 22,
+                            IconButton(
+                              onPressed: () =>
+                                  Navigator.of(pageContext).maybePop(),
+                              icon: const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                color: Colors.white,
+                                size: 32,
                               ),
                             ),
-                            const SizedBox(height: 26),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        song.title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 30,
-                                          fontWeight: FontWeight.w800,
-                                          height: 1.14,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        song.artist ?? 'Unknown Artist',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.86,
-                                          ),
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        _queueIndex >= 0 &&
-                                                _playQueue.isNotEmpty
-                                            ? 'Track ${_queueIndex + 1} of ${_playQueue.length}'
-                                            : (_queuedSongs.isNotEmpty
-                                                  ? 'Queue has ${_queuedSongs.length} songs'
-                                                  : 'Single track playback'),
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.68,
-                                          ),
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ],
+                            const Expanded(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'NOW PLAYING',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11,
+                                      letterSpacing: 1.1,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                IconButton(
-                                  tooltip: _isCurrentSongFavorite
-                                      ? 'Remove from favorites'
-                                      : 'Add to favorites',
-                                  onPressed: _favoriteActionInFlight
-                                      ? null
-                                      : () => unawaited(
-                                          _toggleCurrentSongFavorite(),
-                                        ),
-                                  icon: Icon(
-                                    _isCurrentSongFavorite
-                                        ? Icons.favorite_rounded
-                                        : Icons.favorite_border_rounded,
-                                    color: _isCurrentSongFavorite
-                                        ? const Color(0xFF9EC2FF)
-                                        : Colors.white,
-                                    size: 28,
+                                  SizedBox(height: 2),
+                                  Text(
+                                    'From your queue',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                            const SizedBox(height: 10),
-                            _buildFullPlayerSeekBar(song),
-                            const SizedBox(height: 12),
-                            ValueListenableBuilder<PlayerPlaybackState>(
-                              valueListenable: _player.playbackStateNotifier,
-                              builder: (context, state, child) {
-                                final isLoading =
-                                    state == PlayerPlaybackState.loading;
-                                final isPlaying =
-                                    state == PlayerPlaybackState.playing;
-
-                                return Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
+                            const SizedBox(width: 48),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Center(
+                                  child: _buildSongArtwork(
+                                    song,
+                                    size: artworkSize,
+                                    borderRadius: 22,
+                                  ),
+                                ),
+                                const SizedBox(height: 26),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    IconButton(
-                                      tooltip: _isShuffleEnabled
-                                          ? 'Shuffle on'
-                                          : 'Shuffle off',
-                                      onPressed: _toggleShuffle,
-                                      iconSize: 24,
-                                      icon: Icon(
-                                        Icons.shuffle_rounded,
-                                        color: _isShuffleEnabled
-                                            ? const Color(0xFF9EC2FF)
-                                            : Colors.white,
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            song.title,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 30,
+                                              fontWeight: FontWeight.w800,
+                                              height: 1.14,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            song.artist ?? 'Unknown Artist',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.86,
+                                              ),
+                                              fontSize: 17,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            _queueIndex >= 0 &&
+                                                    _playQueue.isNotEmpty
+                                                ? 'Track ${_queueIndex + 1} of ${_playQueue.length}'
+                                                : (_queuedSongs.isNotEmpty
+                                                      ? 'Queue has ${_queuedSongs.length} songs'
+                                                      : 'Single track playback'),
+                                            style: TextStyle(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.68,
+                                              ),
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          onPressed:
-                                              isLoading || !_hasPreviousSong
-                                              ? null
-                                              : () => unawaited(
-                                                  _playPreviousSong(),
-                                                ),
-                                          iconSize: 38,
-                                          color: Colors.white,
-                                          icon: const Icon(
-                                            Icons.skip_previous_rounded,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        GestureDetector(
-                                          onTap: isLoading
-                                              ? null
-                                              : () => unawaited(
-                                                  _togglePlayPause(),
-                                                ),
-                                          child: Container(
-                                            width: 76,
-                                            height: 76,
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFF0B3B8C),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Icon(
-                                              isPlaying
-                                                  ? Icons.pause_rounded
-                                                  : Icons.play_arrow_rounded,
-                                              color: Colors.white,
-                                              size: 44,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        IconButton(
-                                          onPressed: isLoading || !_hasNextSong
-                                              ? null
-                                              : () =>
-                                                    unawaited(_playNextSong()),
-                                          iconSize: 38,
-                                          color: Colors.white,
-                                          icon: const Icon(
-                                            Icons.skip_next_rounded,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                    const SizedBox(width: 10),
                                     IconButton(
-                                      tooltip: _repeatModeLabel(),
-                                      onPressed: _cycleRepeatMode,
-                                      iconSize: 24,
+                                      tooltip: _isCurrentSongFavorite
+                                          ? 'Remove from favorites'
+                                          : 'Add to favorites',
+                                      onPressed: _favoriteActionInFlight
+                                          ? null
+                                          : () => unawaited(
+                                              _toggleCurrentSongFavorite(),
+                                            ),
                                       icon: Icon(
-                                        repeatIcon,
-                                        color: repeatActive
+                                        _isCurrentSongFavorite
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: _isCurrentSongFavorite
                                             ? const Color(0xFF9EC2FF)
                                             : Colors.white,
+                                        size: 28,
                                       ),
                                     ),
                                   ],
-                                );
-                              },
+                                ),
+                                const SizedBox(height: 10),
+                                _buildFullPlayerSeekBar(song),
+                                const SizedBox(height: 12),
+                                ValueListenableBuilder<PlayerPlaybackState>(
+                                  valueListenable: _player.playbackStateNotifier,
+                                  builder: (context, state, child) {
+                                    final isLoading =
+                                        state == PlayerPlaybackState.loading;
+                                    final isPlaying =
+                                        state == PlayerPlaybackState.playing;
+
+                                    return Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        IconButton(
+                                          tooltip: _isShuffleEnabled
+                                              ? 'Shuffle on'
+                                              : 'Shuffle off',
+                                          onPressed: _toggleShuffle,
+                                          iconSize: 24,
+                                          icon: Icon(
+                                            Icons.shuffle_rounded,
+                                            color: _isShuffleEnabled
+                                                ? const Color(0xFF9EC2FF)
+                                                : Colors.white,
+                                          ),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              onPressed:
+                                                  isLoading || !_hasPreviousSong
+                                                  ? null
+                                                  : () => unawaited(
+                                                      _playPreviousSong(),
+                                                    ),
+                                              iconSize: 38,
+                                              color: Colors.white,
+                                              icon: const Icon(
+                                                Icons.skip_previous_rounded,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            GestureDetector(
+                                              onTap: isLoading
+                                                  ? null
+                                                  : () => unawaited(
+                                                      _togglePlayPause(),
+                                                    ),
+                                              child: Container(
+                                                width: 76,
+                                                height: 76,
+                                                decoration: const BoxDecoration(
+                                                  color: Color(0xFF0B3B8C),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Icon(
+                                                  isPlaying
+                                                      ? Icons.pause_rounded
+                                                      : Icons.play_arrow_rounded,
+                                                  color: Colors.white,
+                                                  size: 44,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            IconButton(
+                                              onPressed:
+                                                  isLoading || !_hasNextSong
+                                                  ? null
+                                                  : () => unawaited(
+                                                      _playNextSong(),
+                                                    ),
+                                              iconSize: 38,
+                                              color: Colors.white,
+                                              icon: const Icon(
+                                                Icons.skip_next_rounded,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        IconButton(
+                                          tooltip: _repeatModeLabel(),
+                                          onPressed: _cycleRepeatMode,
+                                          iconSize: 24,
+                                          icon: Icon(
+                                            repeatIcon,
+                                            color: repeatActive
+                                                ? const Color(0xFF9EC2FF)
+                                                : Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
+                  );
+                },
               );
             },
           ),
@@ -1306,6 +1328,7 @@ class _MainScreenState extends State<MainScreen> {
   void dispose() {
     _player.playbackStateNotifier.removeListener(_handlePlaybackStateChange);
     _currentSongNotifier.dispose();
+    _fullPlayerUiRevision.dispose();
     unawaited(_player.stop());
     super.dispose();
   }

@@ -31,7 +31,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final Set<String> _playlistDownloadsInProgress = <String>{};
   bool _isLoading = true;
   bool _isLoggedIn = false;
-  bool _isImportingSpotify = false;
 
   @override
   void initState() {
@@ -65,46 +64,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } else {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  void _showAddPlaylistOptions() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF202020),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (bottomSheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.playlist_add_rounded),
-                title: const Text('Create New Playlist'),
-                onTap: () {
-                  Navigator.pop(bottomSheetContext);
-                  _showCreatePlaylistDialog();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.link_rounded),
-                title: const Text('Import from Spotify'),
-                subtitle: Text(
-                  'Paste a Spotify playlist URL',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(bottomSheetContext);
-                  _showImportSpotifyDialog();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   void _showCreatePlaylistDialog() {
@@ -156,64 +115,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  void _showImportSpotifyDialog() {
-    String spotifyUrl = '';
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF282828),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text('Import from Spotify'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Paste a Spotify playlist link to import tracks.',
-                style: TextStyle(color: Colors.grey[400], fontSize: 13),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                onChanged: (value) => spotifyUrl = value,
-                autofocus: true,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'https://open.spotify.com/playlist/...',
-                  hintStyle: TextStyle(color: Colors.grey[500]),
-                  filled: true,
-                  fillColor: const Color(0xFF3A3A3A),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _importSpotifyPlaylist(spotifyUrl.trim());
-              },
-              child: const Text(
-                'Import',
-                style: TextStyle(color: Color(0xFF0B3B8C)),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _createPlaylist(String name) async {
     try {
       final result = await _musicService.createPlaylist(name);
@@ -241,103 +142,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           backgroundColor: Colors.red[700],
         ),
       );
-    }
-  }
-
-  Future<void> _importSpotifyPlaylist(String spotifyUrl) async {
-    if (spotifyUrl.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Please paste a Spotify playlist URL'),
-          backgroundColor: Colors.orange[700],
-        ),
-      );
-      return;
-    }
-
-    if (_isImportingSpotify) {
-      return;
-    }
-
-    setState(() {
-      _isImportingSpotify = true;
-    });
-
-    try {
-      final result = await _musicService.importSpotifyPlaylist(spotifyUrl);
-      if (!mounted) return;
-
-      final isSuccess = result['success'] == true;
-      final message = (result['message'] ?? '').toString().trim();
-      final data = result['data'];
-      final playlistData = data is Map ? data['playlist'] : null;
-      final summary = data is Map ? data['summary'] : null;
-
-      if (isSuccess && playlistData is Map) {
-        final playlist = Map<String, dynamic>.from(playlistData);
-        final playlistId = (playlist['_id'] ?? '').toString().trim();
-        setState(() {
-          if (playlistId.isNotEmpty) {
-            _playlists.removeWhere(
-              (item) => (item['_id'] ?? '').toString().trim() == playlistId,
-            );
-          }
-          _playlists.insert(0, playlist);
-        });
-      }
-
-      if (isSuccess) {
-        final imported = summary is Map ? _toInt(summary['imported_tracks']) : 0;
-        final total = summary is Map
-            ? _toInt(summary['total_spotify_tracks'])
-            : 0;
-        final skipped = summary is Map ? _toInt(summary['skipped_missing']) : 0;
-
-        final feedback = message.isNotEmpty
-            ? message
-            : 'Imported $imported of $total tracks from Spotify ($skipped skipped).';
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(feedback),
-            backgroundColor: imported > 0 ? Colors.green[700] : Colors.orange[700],
-          ),
-        );
-      } else {
-        final retryAfter = result['retry_after'];
-        final detail = (result['detail'] ?? '').toString().trim();
-        final retryHint = _toInt(retryAfter) > 0
-            ? ' Try again in ${_toInt(retryAfter)}s.'
-            : '';
-        final errorBase = message.isNotEmpty
-            ? message
-            : 'Could not import playlist from Spotify.';
-        final detailHint = detail.isNotEmpty ? ' ($detail)' : '';
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$errorBase$detailHint$retryHint',
-            ),
-            backgroundColor: Colors.red[700],
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not import Spotify playlist: $e'),
-          backgroundColor: Colors.red[700],
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isImportingSpotify = false;
-        });
-      }
     }
   }
 
@@ -463,16 +267,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
                 if (_isLoggedIn)
                   IconButton(
-                    icon: _isImportingSpotify
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.add_rounded, size: 28),
-                    onPressed: _isImportingSpotify
-                        ? null
-                        : _showAddPlaylistOptions,
+                    icon: const Icon(Icons.add_rounded, size: 28),
+                    onPressed: _showCreatePlaylistDialog,
                   ),
               ],
             ),

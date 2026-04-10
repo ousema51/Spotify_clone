@@ -34,6 +34,8 @@ class _SearchScreenState extends State<SearchScreen> {
   List<Song> _recentSelectedSongs = [];
   List<Album> _albumResults = [];
   List<Artist> _artistResults = [];
+  List<Map<String, dynamic>> _playlists = [];
+  Set<String> _likedSongIds = <String>{};
   bool _isSearching = false;
   bool _hasSearched = false;
 
@@ -63,6 +65,256 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _loadRecentSelections();
+    _loadSongActionState();
+  }
+
+  Future<void> _loadSongActionState() async {
+    try {
+      final likedSongsFuture = _musicService.getLikedSongs();
+      final playlistsFuture = _musicService.getMyPlaylists();
+
+      final likedSongs = await likedSongsFuture;
+      final playlists = await playlistsFuture;
+
+      if (!mounted) return;
+      setState(() {
+        _playlists = playlists;
+        _likedSongIds = likedSongs
+            .map((song) => song.id.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      });
+    } catch (_) {}
+  }
+
+  int _playlistSongCount(Map<String, dynamic> playlist) {
+    final songs = playlist['songs'];
+    return songs is List ? songs.length : 0;
+  }
+
+  Future<void> _showChoosePlaylistForSong(Song song) async {
+    List<Map<String, dynamic>> playlists = _playlists;
+    try {
+      final freshPlaylists = await _musicService.getMyPlaylists();
+      if (freshPlaylists.isNotEmpty || playlists.isEmpty) {
+        playlists = freshPlaylists;
+      }
+      if (mounted) {
+        setState(() {
+          _playlists = freshPlaylists;
+        });
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    if (playlists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Create a playlist first in Library'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
+    final parentContext = context;
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: playlists.length,
+            itemBuilder: (context, index) {
+              final playlist = playlists[index];
+              final playlistName =
+                  (playlist['name'] ?? 'Untitled Playlist').toString();
+              final playlistId = (playlist['_id'] ?? '').toString().trim();
+
+              return ListTile(
+                leading: const Icon(
+                  Icons.queue_music_rounded,
+                  color: Colors.white70,
+                ),
+                title: Text(playlistName),
+                subtitle: Text(
+                  '${_playlistSongCount(playlist)} songs',
+                  style: TextStyle(color: Colors.grey[400]),
+                ),
+                onTap: () async {
+                  final navigator = Navigator.of(parentContext);
+                  final messenger = ScaffoldMessenger.of(parentContext);
+
+                  final result = await _musicService.addSongToPlaylist(
+                    playlistId,
+                    song,
+                  );
+
+                  if (!mounted) return;
+                  navigator.pop();
+                  if (result['success'] == true) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Added to $playlistName'),
+                        backgroundColor: Colors.green[700],
+                      ),
+                    );
+                  } else {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          result['message']?.toString() ??
+                              'Could not add to playlist',
+                        ),
+                        backgroundColor: Colors.red[700],
+                      ),
+                    );
+                  }
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _addSongToLiked(Song song) async {
+    final songId = song.id.trim();
+    if (songId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Cannot like this song'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
+      return;
+    }
+
+    final alreadyLiked = _likedSongIds.contains(songId);
+    if (alreadyLiked) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Song is already in liked songs'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
+    final result = await _musicService.likeSong(songId, song.toMetadata());
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      setState(() {
+        _likedSongIds.add(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Added to liked songs'),
+          backgroundColor: Colors.green[700],
+        ),
+      );
+      return;
+    }
+
+    final message = (result['message'] ?? 'Could not add to liked songs')
+        .toString();
+    final isAlreadyLikedMessage = message.toLowerCase().contains('already');
+    if (isAlreadyLikedMessage) {
+      setState(() {
+        _likedSongIds.add(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red[700],
+      ),
+    );
+  }
+
+  Future<void> _removeSongFromLiked(Song song) async {
+    final songId = song.id.trim();
+    if (songId.isEmpty) {
+      return;
+    }
+
+    final result = await _musicService.unlikeSong(songId);
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      setState(() {
+        _likedSongIds.remove(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Removed from liked songs'),
+          backgroundColor: Colors.green[700],
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result['message']?.toString() ?? 'Could not remove from liked songs',
+        ),
+        backgroundColor: Colors.red[700],
+      ),
+    );
+  }
+
+  Widget _buildSongResultItem(Song song, List<Song> queue) {
+    final songId = song.id.trim();
+    final isLiked = songId.isNotEmpty && _likedSongIds.contains(songId);
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0),
+      title: SongTile(
+        song: song,
+        onTap: () => _onSongSelectedFromSearch(song, queue),
+      ),
+      trailing: PopupMenuButton<String>(
+        onSelected: (value) {
+          if (value == 'add_to_playlist') {
+            _showChoosePlaylistForSong(song);
+          } else if (value == 'add_to_liked') {
+            _addSongToLiked(song);
+          } else if (value == 'remove_from_liked') {
+            _removeSongFromLiked(song);
+          }
+        },
+        itemBuilder: (context) => [
+          const PopupMenuItem(
+            value: 'add_to_playlist',
+            child: Text('Add to playlist'),
+          ),
+          PopupMenuItem(
+            value: isLiked ? 'remove_from_liked' : 'add_to_liked',
+            child: Text(
+              isLiked ? 'Remove from liked songs' : 'Add to liked songs',
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadRecentSelections() async {
@@ -223,10 +475,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           const SizedBox(height: 8),
           ..._songResults.map(
-            (song) => SongTile(
-              song: song,
-              onTap: () => _onSongSelectedFromSearch(song, _songResults),
-            ),
+            (song) => _buildSongResultItem(song, _songResults),
           ),
           const SizedBox(height: 20),
         ],
@@ -301,10 +550,7 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
         const SizedBox(height: 8),
         ..._recentSelectedSongs.map(
-          (song) => SongTile(
-            song: song,
-            onTap: () => _onSongSelectedFromSearch(song, _recentSelectedSongs),
-          ),
+          (song) => _buildSongResultItem(song, _recentSelectedSongs),
         ),
       ],
     );

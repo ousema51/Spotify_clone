@@ -280,17 +280,6 @@ class MusicService {
     });
   }
 
-  Future<Map<String, dynamic>> importSpotifyPlaylist(
-    String spotifyUrl, {
-    String? spotifyAccessToken,
-  }) async {
-    final payload = <String, dynamic>{'spotify_url': spotifyUrl};
-    if (spotifyAccessToken != null && spotifyAccessToken.trim().isNotEmpty) {
-      payload['spotify_access_token'] = spotifyAccessToken.trim();
-    }
-    return _api.post('/playlists/import/spotify', payload);
-  }
-
   Future<Map<String, dynamic>> addSongToPlaylist(
     String playlistId,
     Song song,
