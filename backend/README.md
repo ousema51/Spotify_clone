@@ -66,6 +66,11 @@ cp .env.example .env
 | `YTDLP_COOKIES_FROM_BROWSER` | Browser cookie source for yt-dlp (`chrome:Default`, etc.) |
 | `YTDLP_PO_TOKEN`    | Optional yt-dlp YouTube PO token for restricted videos   |
 | `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
+| `YTDLP_PROVIDER`    | Set to `rapidapi` to prefer external yt-dlp API          |
+| `YTDLP_RAPIDAPI_KEY`| RapidAPI key for external yt-dlp API                     |
+| `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `yt-dlp-api.p.rapidapi.com`)    |
+| `YTDLP_RAPIDAPI_URL`| RapidAPI endpoint URL (default `https://yt-dlp-api.p.rapidapi.com/`) |
+| `YTDLP_ALLOW_LOCAL_FALLBACK` | `1` to allow local yt-dlp after external failure (`0` recommended on Vercel) |
 
 Cookie loading priority used by this backend:
 1. `YTDLP_COOKIES_B64` / `YTDLP_COOKIES_BASE64`
@@ -75,6 +80,8 @@ Cookie loading priority used by this backend:
 The backend also auto-converts raw `Cookie:` header strings into Netscape cookie format, so `backend/cookies/cookie.txt` can contain either Netscape cookies or a single cookie header line.
 
 If yt-dlp still fails (for example YouTube bot challenge), backend automatically falls back to Piped stream resolution. You can override instances via `PIPED_INSTANCES` (comma-separated URLs).
+
+When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend requests stream extraction from RapidAPI first, then falls back to Piped. This avoids relying on local yt-dlp execution in Vercel.
 
 ### 3. Run locally
 

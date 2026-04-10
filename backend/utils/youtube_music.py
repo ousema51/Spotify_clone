@@ -481,6 +481,186 @@ def _load_piped_instances():
     return [v.rstrip("/") for v in _DEFAULT_PIPED_INSTANCES]
 
 
+def _get_rapidapi_key():
+    return (
+        (os.environ.get("YTDLP_RAPIDAPI_KEY") or "").strip()
+        or (os.environ.get("RAPIDAPI_KEY") or "").strip()
+        or (os.environ.get("X_RAPIDAPI_KEY") or "").strip()
+    )
+
+
+def _get_rapidapi_host():
+    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "yt-dlp-api.p.rapidapi.com").strip()
+
+
+def _get_rapidapi_url():
+    return (os.environ.get("YTDLP_RAPIDAPI_URL") or "https://yt-dlp-api.p.rapidapi.com/").strip()
+
+
+def _external_ytdlp_api_enabled():
+    provider = (os.environ.get("YTDLP_PROVIDER") or "").strip().lower()
+    if provider in ("rapidapi", "external", "remote"):
+        return True
+    return bool(_get_rapidapi_key())
+
+
+def _allow_local_ytdlp_fallback():
+    raw = (os.environ.get("YTDLP_ALLOW_LOCAL_FALLBACK") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _pick_best_audio_url_from_formats(formats):
+    if not isinstance(formats, list):
+        return None
+
+    best_url = None
+    best_score = -1
+    for fmt in formats:
+        if not isinstance(fmt, dict):
+            continue
+
+        url = _safe_str(fmt.get("url") or fmt.get("download_url") or fmt.get("audio_url"))
+        if not url:
+            continue
+
+        acodec = (_safe_str(fmt.get("acodec") or fmt.get("audioCodec") or fmt.get("codec")) or "").lower()
+        if acodec == "none":
+            continue
+
+        vcodec = (_safe_str(fmt.get("vcodec") or fmt.get("videoCodec")) or "").lower()
+        bitrate = _safe_int(fmt.get("abr")) or _safe_int(fmt.get("tbr")) or _safe_int(fmt.get("bitrate")) or 0
+        ext = (_safe_str(fmt.get("ext") or fmt.get("container")) or "").lower()
+
+        score = bitrate
+        if vcodec == "none" or not vcodec:
+            score += 20
+        if ext in ("m4a", "webm", "mp4", "ogg"):
+            score += 10
+
+        if score > best_score:
+            best_score = score
+            best_url = url
+
+    return best_url
+
+
+def _extract_audio_url_from_external_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    candidate_maps = [payload]
+    data_map = payload.get("data")
+    if isinstance(data_map, dict):
+        candidate_maps.insert(0, data_map)
+    result_map = payload.get("result")
+    if isinstance(result_map, dict):
+        candidate_maps.insert(0, result_map)
+
+    for candidate in candidate_maps:
+        for key in (
+            "audio_url",
+            "audio",
+            "url",
+            "download_url",
+            "downloadUrl",
+            "stream_url",
+            "link",
+        ):
+            value = _safe_str(candidate.get(key))
+            if value:
+                return value
+
+    for candidate in candidate_maps:
+        for key in ("requested_downloads", "requested_formats", "formats", "audios", "entries"):
+            value = candidate.get(key)
+            picked = _pick_best_audio_url_from_formats(value)
+            if picked:
+                return picked
+
+    return None
+
+
+def _resolve_stream_from_external_api(video_id):
+    if not _external_ytdlp_api_enabled():
+        return {"success": False, "error_code": "external_disabled", "message": "External yt-dlp API disabled"}
+
+    api_key = _get_rapidapi_key()
+    if not api_key:
+        return {"success": False, "error_code": "external_missing_key", "message": "Missing RapidAPI key"}
+
+    resolved_id = _extract_video_id(video_id)
+    if not resolved_id:
+        return {"success": False, "message": "Invalid video_id"}
+
+    endpoint = _get_rapidapi_url()
+    host = _get_rapidapi_host()
+    target_url = "https://www.youtube.com/watch?v={}".format(resolved_id)
+
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": host,
+        "accept": "application/json",
+        "content-type": "application/json",
+    }
+
+    timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", 20))
+
+    try:
+        response = requests.get(
+            endpoint,
+            params={"url": target_url},
+            headers=headers,
+            timeout=(8, timeout_seconds),
+        )
+    except Exception as e:
+        return {
+            "success": False,
+            "error_code": "external_request_failed",
+            "message": "RapidAPI yt-dlp request failed: {}".format(str(e)),
+        }
+
+    if response.status_code >= 400:
+        body = response.text[:220] if response.text else ""
+        return {
+            "success": False,
+            "error_code": "external_http_error",
+            "message": "RapidAPI yt-dlp returned status {}: {}".format(response.status_code, body),
+        }
+
+    try:
+        payload = response.json()
+    except Exception as e:
+        return {
+            "success": False,
+            "error_code": "external_invalid_json",
+            "message": "RapidAPI yt-dlp returned invalid JSON: {}".format(str(e)),
+        }
+
+    audio_url = _extract_audio_url_from_external_payload(payload)
+    if not audio_url:
+        return {
+            "success": False,
+            "error_code": "external_no_audio_url",
+            "message": "RapidAPI yt-dlp response did not include a usable audio URL",
+        }
+
+    data_map = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    title = _safe_str(data_map.get("title") if isinstance(data_map, dict) else None)
+    duration = _safe_int(data_map.get("duration") if isinstance(data_map, dict) else None)
+
+    return {
+        "success": True,
+        "data": {
+            "audio_url": audio_url,
+            "headers": _merged_stream_headers(),
+            "video_id": resolved_id,
+            "title": title,
+            "duration": duration,
+            "source": "rapidapi-yt-dlp",
+        },
+    }
+
+
 def _pick_best_piped_audio_stream(streams):
     if not isinstance(streams, list):
         return None
@@ -848,18 +1028,35 @@ def get_stream_url(video_id=""):
     if cached:
         return {"success": True, "data": cached}
 
-    target = "https://www.youtube.com/watch?v={}".format(resolved_id)
-    result = _resolve_stream_from_yt_dlp(target, from_search=False)
-    if result.get("success"):
-        data = result.get("data") or {}
+    local_result = {"success": False, "message": "local yt-dlp not attempted"}
+    external_result = {"success": False, "message": "external yt-dlp not attempted"}
+
+    if _external_ytdlp_api_enabled():
+        external_result = _resolve_stream_from_external_api(resolved_id)
+        if external_result.get("success"):
+            data = external_result.get("data") or {}
+            if not data.get("video_id"):
+                data["video_id"] = resolved_id
+            _stream_cache_set(resolved_id, data)
+            external_result["data"] = data
+            return external_result
+
+        if _allow_local_ytdlp_fallback():
+            target = "https://www.youtube.com/watch?v={}".format(resolved_id)
+            local_result = _resolve_stream_from_yt_dlp(target, from_search=False)
+    else:
+        target = "https://www.youtube.com/watch?v={}".format(resolved_id)
+        local_result = _resolve_stream_from_yt_dlp(target, from_search=False)
+
+    if local_result.get("success"):
+        data = local_result.get("data") or {}
         if not data.get("video_id"):
             data["video_id"] = resolved_id
         _stream_cache_set(resolved_id, data)
-        result["data"] = data
-        return result
+        local_result["data"] = data
+        return local_result
 
-    stale = None
-    if result.get("error_code") == "bot_challenge":
+    if local_result.get("error_code") == "bot_challenge":
         stale = _stream_cache_get(resolved_id, allow_stale=True)
         if stale:
             return {
@@ -877,22 +1074,26 @@ def get_stream_url(video_id=""):
         piped_result["data"] = data
         return piped_result
 
-    if result.get("error_code") == "bot_challenge":
-        return {
-            "success": False,
-            "error_code": "bot_challenge",
-            "message": "{} Piped fallback error: {}".format(
-                result.get("message", "YouTube bot challenge detected"),
-                piped_result.get("message", "unknown"),
-            ),
-        }
+    attempted_messages = []
+    if _external_ytdlp_api_enabled():
+        attempted_messages.append(
+            "external api error: {}".format(external_result.get("message", "unknown"))
+        )
+    if local_result.get("message") and local_result.get("message") != "local yt-dlp not attempted":
+        attempted_messages.append("local yt-dlp error: {}".format(local_result.get("message")))
+    attempted_messages.append(
+        "piped fallback error: {}".format(piped_result.get("message", "unknown"))
+    )
+
+    error_code = local_result.get("error_code") or external_result.get("error_code")
+    message = "; ".join(attempted_messages)
+    if not message:
+        message = "Failed to resolve stream URL"
 
     return {
         "success": False,
-        "message": "{} Piped fallback error: {}".format(
-            result.get("message", "yt-dlp stream extraction failed"),
-            piped_result.get("message", "unknown"),
-        ),
+        "error_code": error_code,
+        "message": message,
     }
 
 
@@ -900,6 +1101,20 @@ def get_stream_from_search(query=""):
     query = (_safe_str(query) or "").strip()
     if not query:
         return {"success": False, "message": "No query provided"}
+
+    # In external mode, avoid local yt-dlp search extraction on serverless hosts.
+    if _external_ytdlp_api_enabled() and not _allow_local_ytdlp_fallback():
+        search_result = search_songs(query, page=1, limit=1)
+        if search_result.get("success"):
+            songs = search_result.get("data") or []
+            if songs:
+                first_id = _extract_video_id((songs[0] or {}).get("id"))
+                if first_id:
+                    return get_stream_url(first_id)
+        return {
+            "success": False,
+            "message": "Failed to resolve stream from search in external API mode",
+        }
 
     ytdlp_result = _resolve_stream_from_yt_dlp(
         "ytsearch8:{}".format(query),
@@ -1118,6 +1333,9 @@ def health_check():
     materialized_cookie_file = _materialize_cookiefile_from_env() if cookie_blob else None
     local_cookie_source = _discover_local_cookie_source()
     piped_instances = _load_piped_instances()
+    rapidapi_key = _get_rapidapi_key()
+    rapidapi_url = _get_rapidapi_url()
+    rapidapi_host = _get_rapidapi_host()
 
     status = {
         "ytmusic": ytmusic is not None,
@@ -1142,6 +1360,12 @@ def health_check():
         "piped_fallback_enabled": True,
         "piped_instances_count": len(piped_instances),
         "piped_instances": piped_instances,
+        "external_ytdlp_enabled": _external_ytdlp_api_enabled(),
+        "external_provider": "rapidapi" if _external_ytdlp_api_enabled() else None,
+        "rapidapi_key_configured": bool(rapidapi_key),
+        "rapidapi_url": rapidapi_url,
+        "rapidapi_host": rapidapi_host,
+        "allow_local_ytdlp_fallback": _allow_local_ytdlp_fallback(),
     }
     if ytmusic:
         try:
