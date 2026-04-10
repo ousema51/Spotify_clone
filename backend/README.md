@@ -68,12 +68,13 @@ cp .env.example .env
 | `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
 | `YTDLP_PROVIDER`    | Set to `rapidapi` to prefer external yt-dlp API          |
 | `YTDLP_RAPIDAPI_KEY`| RapidAPI key for external yt-dlp API                     |
-| `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `youtube-to-mp315.p.rapidapi.com`)    |
-| `YTDLP_RAPIDAPI_URL`| RapidAPI primary endpoint URL (default `https://youtube-to-mp315.p.rapidapi.com/download`) |
-| `YTDLP_RAPIDAPI_STATUS_URL`| Optional status endpoint URL for request-id polling (default auto-derived `/status/{id}`) |
+| `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `youtube-mp3-audio-video-downloader.p.rapidapi.com`)    |
+| `YTDLP_RAPIDAPI_URL`| RapidAPI primary endpoint URL (default `https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=false`) |
+| `YTDLP_RAPIDAPI_STATUS_URL`| Optional status endpoint URL for request-id polling (used by status-based providers) |
 | `YTDLP_RAPIDAPI_FORMAT`| Requested format for `/download` (default `mp3`) |
 | `YTDLP_RAPIDAPI_QUALITY`| Requested quality value for `/download` (default `0`) |
 | `YTDLP_RAPIDAPI_CALLBACK_URL`| Optional callback URL forwarded to provider |
+| `YTDLP_EXTERNAL_TIMEOUT_SECONDS`| External API timeout in seconds (default `60` for this provider) |
 | `YTDLP_RAPIDAPI_TRY_ALT_PATHS` | `1` to probe alternate RapidAPI paths if default URL fails |
 | `YTDLP_ALLOW_LOCAL_FALLBACK` | `1` to allow local yt-dlp after external failure (`0` recommended on Vercel) |
 
@@ -86,7 +87,7 @@ The backend also auto-converts raw `Cookie:` header strings into Netscape cookie
 
 If yt-dlp still fails (for example YouTube bot challenge), backend automatically falls back to Piped stream resolution. You can override instances via `PIPED_INSTANCES` (comma-separated URLs).
 
-When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend requests stream extraction from RapidAPI first, then falls back to other configured resolvers. By default it calls `POST /download?url=...` and sends the documented JSON body (`url`, `format`, `quality`, optional `callbackUrl`). If the provider returns a request id in a processing state, backend polls `/status/{id}` (or `YTDLP_RAPIDAPI_STATUS_URL`) before deciding success/failure. If provider conversion fails or is unavailable, backend automatically retries local yt-dlp extraction before Piped fallback.
+When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend requests stream extraction from RapidAPI first, then falls back to other configured resolvers. By default it calls `GET /get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=false` on `youtube-mp3-audio-video-downloader.p.rapidapi.com` using the extracted YouTube video id. Status-polling logic is still supported for `/download`-style request-id providers via `YTDLP_RAPIDAPI_STATUS_URL`. If provider conversion fails or is unavailable, backend automatically retries local yt-dlp extraction before Piped fallback.
 
 ### 3. Run locally
 

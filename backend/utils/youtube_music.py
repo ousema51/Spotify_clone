@@ -509,13 +509,13 @@ def _get_rapidapi_key():
 
 
 def _get_rapidapi_host():
-    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-to-mp315.p.rapidapi.com").strip()
+    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-mp3-audio-video-downloader.p.rapidapi.com").strip()
 
 
 def _get_rapidapi_url():
     return (
         os.environ.get("YTDLP_RAPIDAPI_URL")
-        or "https://youtube-to-mp315.p.rapidapi.com/download"
+        or "https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=false"
     ).strip()
 
 
@@ -614,6 +614,8 @@ def _extract_audio_url_from_external_payload(payload):
             "mp3",
             "mp3_url",
             "file",
+            "reserved_file",
+            "reservedFile",
             "file_url",
             "result_url",
             "download_url",
@@ -843,7 +845,8 @@ def _resolve_stream_from_external_api(video_id):
         "content-type": "application/json",
     }
 
-    timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", 20))
+    default_timeout = 60 if "youtube-mp3-audio-video-downloader" in host else 20
+    timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", default_timeout))
 
     last_error = None
     payload = None
