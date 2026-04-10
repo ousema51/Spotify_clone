@@ -213,6 +213,93 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     return _cachedSongKeys.contains(_audioCache.cacheKeyForSong(song));
   }
 
+  void _playSongs({required bool shuffle}) {
+    if (_songs.isEmpty) {
+      return;
+    }
+
+    final queue = List<Song>.from(_songs);
+    if (shuffle && queue.length > 1) {
+      queue.shuffle();
+    }
+    widget.onSongSelected(queue.first, queue);
+  }
+
+  Widget _buildPlaylistSummaryCard() {
+    final name = (_playlist?['name'] ?? 'Playlist').toString();
+    final cachedCount = _songs.where(_isSongCached).length;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F315F), Color(0xFF142647), Color(0xFF1A1A1A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${_songs.length} songs  •  $cachedCount offline',
+            style: TextStyle(color: Colors.grey[300], fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _songs.isEmpty
+                      ? null
+                      : () => _playSongs(shuffle: false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                  label: const Text('Play all'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _songs.isEmpty
+                      ? null
+                      : () => _playSongs(shuffle: true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF0B3B8C),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.shuffle_rounded, size: 18),
+                  label: const Text('Shuffle'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDownloadProgressHeader() {
     final total = _downloadTotal <= 0 ? 1 : _downloadTotal;
     final fraction = (_downloadProcessed / total).clamp(0.0, 1.0);
@@ -721,95 +808,117 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                     color: const Color(0xFF0B3B8C),
                     child: ListView.builder(
                       padding: const EdgeInsets.only(bottom: 90),
-                      itemCount: _songs.length,
+                      itemCount: _songs.length + 1,
                       itemBuilder: (context, index) {
-                        final song = _songs[index];
+                        if (index == 0) {
+                          return _buildPlaylistSummaryCard();
+                        }
+
+                        final song = _songs[index - 1];
                         final isCached = _isSongCached(song);
 
-                        return Dismissible(
-                          key: ValueKey('${song.id}-${index.toString()}'),
-                          background: Container(
-                            color: Colors.red[700],
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: const Icon(
-                              Icons.delete_rounded,
-                              color: Colors.white,
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: Dismissible(
+                            key: ValueKey('${song.id}-${index.toString()}'),
+                            background: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.red[700],
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              child: const Icon(
+                                Icons.delete_rounded,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                          direction: DismissDirection.endToStart,
-                          confirmDismiss: (_) async {
-                            await _removeSong(song);
-                            return false;
-                          },
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                            ),
-                            title: SongTile(
-                              song: song,
-                              onTap: () async {
-                                await _activity.recordPlaylistPlay(
-                                  playlistId: widget.playlistId,
-                                  playlistName:
-                                      (_playlist?['name'] ?? 'Playlist')
-                                          .toString(),
-                                  coverUrl: song.coverUrl,
-                                );
-                                widget.onSongSelected(song, _songs);
-                              },
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (isCached)
-                                  const Padding(
-                                    padding: EdgeInsets.only(right: 4),
-                                    child: Icon(
-                                      Icons.download_done_rounded,
-                                      size: 16,
-                                      color: Color(0xFF0B3B8C),
-                                    ),
-                                  ),
-                                PopupMenuButton<String>(
-                                  onSelected: (value) async {
-                                    if (value == 'add_to_queue') {
-                                      final messenger = ScaffoldMessenger.of(
-                                        context,
-                                      );
-                                      final added = await widget.onAddToQueue(
-                                        song,
-                                        _songs,
-                                      );
-                                      if (!mounted) return;
-                                      messenger.showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            added
-                                                ? 'Added to queue'
-                                                : 'Song is already in queue',
-                                          ),
-                                          backgroundColor: added
-                                              ? Colors.green[700]
-                                              : Colors.orange[700],
-                                        ),
-                                      );
-                                    } else if (value == 'remove') {
-                                      await _confirmAndRemoveSong(song);
-                                    }
+                            direction: DismissDirection.endToStart,
+                            confirmDismiss: (_) async {
+                              await _removeSong(song);
+                              return false;
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1D1D1D),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.05),
+                                ),
+                              ),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 2,
+                                ),
+                                title: SongTile(
+                                  song: song,
+                                  onTap: () async {
+                                    await _activity.recordPlaylistPlay(
+                                      playlistId: widget.playlistId,
+                                      playlistName:
+                                          (_playlist?['name'] ?? 'Playlist')
+                                              .toString(),
+                                      coverUrl: song.coverUrl,
+                                    );
+                                    widget.onSongSelected(song, _songs);
                                   },
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value: 'add_to_queue',
-                                      child: Text('Add to queue'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'remove',
-                                      child: Text('Remove from playlist'),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isCached)
+                                      const Padding(
+                                        padding: EdgeInsets.only(right: 4),
+                                        child: Icon(
+                                          Icons.download_done_rounded,
+                                          size: 16,
+                                          color: Color(0xFF0B3B8C),
+                                        ),
+                                      ),
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) async {
+                                        if (value == 'add_to_queue') {
+                                          final messenger =
+                                              ScaffoldMessenger.of(context);
+                                          final added =
+                                              await widget.onAddToQueue(
+                                                song,
+                                                _songs,
+                                              );
+                                          if (!mounted) return;
+                                          messenger.showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                added
+                                                    ? 'Added to queue'
+                                                    : 'Song is already in queue',
+                                              ),
+                                              backgroundColor: added
+                                                  ? Colors.green[700]
+                                                  : Colors.orange[700],
+                                            ),
+                                          );
+                                        } else if (value == 'remove') {
+                                          await _confirmAndRemoveSong(song);
+                                        }
+                                      },
+                                      itemBuilder: (context) => const [
+                                        PopupMenuItem(
+                                          value: 'add_to_queue',
+                                          child: Text('Add to queue'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'remove',
+                                          child: Text('Remove from playlist'),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              ],
+                              ),
                             ),
                           ),
                         );

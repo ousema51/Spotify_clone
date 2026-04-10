@@ -281,7 +281,34 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildSongResultItem(Song song, List<Song> queue) {
+  Future<void> _removeSongFromRecentSelections(Song song) async {
+    final songId = song.id.trim();
+    if (songId.isEmpty) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _recentSelectedSongs.removeWhere((s) => s.id == songId);
+      });
+    }
+
+    await _activityService.removeRecentSearchSong(songId);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Removed from recent searches'),
+        backgroundColor: Colors.green[700],
+      ),
+    );
+  }
+
+  Widget _buildSongResultItem(
+    Song song,
+    List<Song> queue, {
+    bool isRecentSelection = false,
+  }) {
     final songId = song.id.trim();
     final isLiked = songId.isNotEmpty && _likedSongIds.contains(songId);
 
@@ -299,20 +326,35 @@ class _SearchScreenState extends State<SearchScreen> {
             _addSongToLiked(song);
           } else if (value == 'remove_from_liked') {
             _removeSongFromLiked(song);
+          } else if (value == 'remove_from_recent') {
+            _removeSongFromRecentSelections(song);
           }
         },
-        itemBuilder: (context) => [
-          const PopupMenuItem(
-            value: 'add_to_playlist',
-            child: Text('Add to playlist'),
-          ),
-          PopupMenuItem(
-            value: isLiked ? 'remove_from_liked' : 'add_to_liked',
-            child: Text(
-              isLiked ? 'Remove from liked songs' : 'Add to liked songs',
+        itemBuilder: (context) {
+          final items = <PopupMenuEntry<String>>[
+            const PopupMenuItem(
+              value: 'add_to_playlist',
+              child: Text('Add to playlist'),
             ),
-          ),
-        ],
+            PopupMenuItem(
+              value: isLiked ? 'remove_from_liked' : 'add_to_liked',
+              child: Text(
+                isLiked ? 'Remove from liked songs' : 'Add to liked songs',
+              ),
+            ),
+          ];
+
+          if (isRecentSelection) {
+            items.add(
+              const PopupMenuItem(
+                value: 'remove_from_recent',
+                child: Text('Remove from recent searches'),
+              ),
+            );
+          }
+
+          return items;
+        },
       ),
     );
   }
@@ -550,7 +592,11 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
         const SizedBox(height: 8),
         ..._recentSelectedSongs.map(
-          (song) => _buildSongResultItem(song, _recentSelectedSongs),
+          (song) => _buildSongResultItem(
+            song,
+            _recentSelectedSongs,
+            isRecentSelection: true,
+          ),
         ),
       ],
     );

@@ -321,24 +321,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   color: const Color(0xFF0B3B8C),
                   child: ListView(
                     children: [
-                      // Liked Songs card
                       Container(
-                        margin: const EdgeInsets.only(bottom: 4),
+                        margin: const EdgeInsets.only(bottom: 14),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF143673),
+                              Color(0xFF112954),
+                              Color(0xFF1B1B1B),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08),
+                          ),
+                        ),
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 4,
+                            horizontal: 12,
+                            vertical: 8,
                           ),
                           leading: Container(
-                            width: 52,
-                            height: 52,
+                            width: 50,
+                            height: 50,
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(6),
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF7B4FFF), Color(0xFF0B3B8C)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                              borderRadius: BorderRadius.circular(10),
+                              color: Colors.white.withValues(alpha: 0.12),
                             ),
                             child: const Icon(
                               Icons.favorite_rounded,
@@ -349,22 +359,73 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           title: const Text(
                             'Liked Songs',
                             style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
                             ),
                           ),
                           subtitle: Text(
-                            'Playlist - ${_likedSongs.length} songs',
+                            '${_likedSongs.length} songs',
                             style: TextStyle(
-                              color: Colors.grey[500],
+                              color: Colors.grey[300],
                               fontSize: 13,
                             ),
+                          ),
+                          trailing: Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: Colors.grey[300],
+                            size: 16,
                           ),
                           onTap: widget.onOpenLikedSongs,
                         ),
                       ),
-
-                      // User playlists
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(2, 0, 2, 10),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Playlists',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              '${_playlists.length}',
+                              style: TextStyle(
+                                color: Colors.grey[400],
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_playlists.isEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1D1D1D),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.06),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.queue_music_rounded,
+                                color: Colors.grey[500],
+                                size: 20,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                'No playlists yet. Tap + to create one.',
+                                style: TextStyle(color: Colors.grey[400]),
+                              ),
+                            ],
+                          ),
+                        ),
                       ..._playlists.map((playlist) {
                         final playlistId = (playlist['_id'] ?? '')
                             .toString()
@@ -373,64 +434,71 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             .contains(playlistId);
 
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 4),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 4,
-                            ),
-                            leading: Container(
-                              width: 52,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(6),
-                                color: const Color(0xFF282828),
-                              ),
-                              child: const Icon(
-                                Icons.music_note_rounded,
-                                color: Colors.white,
-                                size: 24,
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1D1D1D),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.05),
                               ),
                             ),
-                            title: Text(
-                              (playlist['name'] ?? 'Untitled Playlist')
-                                  .toString(),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
                               ),
-                            ),
-                            subtitle: Text(
-                              'Playlist - ${_playlistSongCount(playlist)} songs',
-                              style: TextStyle(
-                                color: Colors.grey[500],
-                                fontSize: 13,
+                              leading: Container(
+                                width: 46,
+                                height: 46,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(10),
+                                  color: const Color(0xFF2A2A2A),
+                                ),
+                                child: const Icon(
+                                  Icons.queue_music_rounded,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
                               ),
+                              title: Text(
+                                (playlist['name'] ?? 'Untitled Playlist')
+                                    .toString(),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${_playlistSongCount(playlist)} songs',
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 13,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                tooltip: isDownloading
+                                    ? 'Downloading audio...'
+                                    : 'Download missing audio',
+                                onPressed: playlistId.isEmpty || isDownloading
+                                    ? null
+                                    : () => _downloadPlaylistAudio(playlist),
+                                icon: isDownloading
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.download_rounded),
+                              ),
+                              onTap: () {
+                                if (playlistId.isEmpty) {
+                                  return;
+                                }
+                                widget.onOpenPlaylist(playlistId);
+                              },
                             ),
-                            trailing: IconButton(
-                              tooltip: isDownloading
-                                  ? 'Downloading audio...'
-                                  : 'Download missing audio',
-                              onPressed: playlistId.isEmpty || isDownloading
-                                  ? null
-                                  : () => _downloadPlaylistAudio(playlist),
-                              icon: isDownloading
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.download_rounded),
-                            ),
-                            onTap: () {
-                              if (playlistId.isEmpty) {
-                                return;
-                              }
-                              widget.onOpenPlaylist(playlistId);
-                            },
-                          ),
                         );
                       }),
                     ],

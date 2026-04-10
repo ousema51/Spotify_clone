@@ -48,6 +48,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _favoriteActionInFlight = false;
   bool _isCurrentSongFavorite = false;
   int _favoriteStatusRequestNonce = 0;
+  int _prebufferGeneration = 0;
+  Set<String> _prebufferAttemptedKeys = <String>{};
 
   final List<Song> _queuedSongs = [];
 
@@ -73,6 +75,7 @@ class _MainScreenState extends State<MainScreen> {
     _currentSongNotifier.value = song;
 
     if (song == null) {
+      _cancelSequentialPrebuffering();
       _isCurrentSongFavorite = false;
       _markFullPlayerUiDirty();
       return;
@@ -83,6 +86,7 @@ class _MainScreenState extends State<MainScreen> {
         songId.isNotEmpty && _favoriteSongIds.contains(songId);
     _markFullPlayerUiDirty();
     unawaited(_loadFavoriteStateForSong(song));
+    _restartSequentialPrebuffering();
   }
 
   void _handlePlaybackStateChange() {
@@ -149,6 +153,7 @@ class _MainScreenState extends State<MainScreen> {
       _isShuffleEnabled = !_isShuffleEnabled;
     });
     _markFullPlayerUiDirty();
+    _restartSequentialPrebuffering();
   }
 
   void _cycleRepeatMode() {
@@ -166,6 +171,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
     _markFullPlayerUiDirty();
+    _restartSequentialPrebuffering();
   }
 
   String _repeatModeLabel() {
@@ -176,6 +182,82 @@ class _MainScreenState extends State<MainScreen> {
         return 'Loop playlist';
       case QueueRepeatMode.song:
         return 'Loop current song';
+    }
+  }
+
+  List<Song> _buildSequentialBufferTargets() {
+    final queue = _effectiveQueue();
+    final current = _currentSong;
+
+    if (queue.isEmpty || current == null) {
+      return const <Song>[];
+    }
+
+    final currentIndex = _indexInQueue(queue, current);
+    if (currentIndex < 0) {
+      return List<Song>.from(queue);
+    }
+
+    final targets = <Song>[];
+
+    if (_isShuffleEnabled) {
+      for (var i = 0; i < queue.length; i++) {
+        if (i != currentIndex) {
+          targets.add(queue[i]);
+        }
+      }
+      return targets;
+    }
+
+    for (var i = currentIndex + 1; i < queue.length; i++) {
+      targets.add(queue[i]);
+    }
+
+    if (_repeatMode == QueueRepeatMode.playlist && queue.length > 1) {
+      for (var i = 0; i < currentIndex; i++) {
+        targets.add(queue[i]);
+      }
+    }
+
+    return targets;
+  }
+
+  void _cancelSequentialPrebuffering() {
+    _prebufferGeneration++;
+    _prebufferAttemptedKeys = <String>{};
+  }
+
+  void _restartSequentialPrebuffering() {
+    final generation = ++_prebufferGeneration;
+    _prebufferAttemptedKeys = <String>{};
+    unawaited(_runSequentialPrebuffering(generation));
+  }
+
+  Future<void> _runSequentialPrebuffering(int generation) async {
+    while (mounted && generation == _prebufferGeneration) {
+      final targets = _buildSequentialBufferTargets();
+
+      Song? targetSong;
+      for (final song in targets) {
+        final key = _audioCache.cacheKeyForSong(song);
+        if (_prebufferAttemptedKeys.contains(key)) {
+          continue;
+        }
+
+        _prebufferAttemptedKeys.add(key);
+        targetSong = song;
+        break;
+      }
+
+      if (targetSong == null) {
+        return;
+      }
+
+      try {
+        await _audioCache.cacheSongIfMissing(targetSong);
+      } catch (_) {
+        // Ignore cache warmup failures and continue with remaining tracks.
+      }
     }
   }
 
@@ -1131,6 +1213,38 @@ class _MainScreenState extends State<MainScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.notifications_active_rounded,
+                      size: 14,
+                      color: Colors.white.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'NOW PLAYING',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 11,
+                        letterSpacing: 0.6,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_hasNextSong)
+                      Text(
+                        'Queue preloading',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.72),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
               Row(
                 children: [
                   Expanded(
@@ -1280,6 +1394,8 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
 
+    _restartSequentialPrebuffering();
+
     return true;
   }
 
@@ -1396,6 +1512,7 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
+    _cancelSequentialPrebuffering();
     _player.playbackStateNotifier.removeListener(_handlePlaybackStateChange);
     _currentSongNotifier.dispose();
     _fullPlayerUiRevision.dispose();

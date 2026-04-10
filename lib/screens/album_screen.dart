@@ -82,6 +82,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
               : CustomScrollView(
                   slivers: [
                     SliverAppBar(
+                      automaticallyImplyLeading: false,
                       expandedHeight: 300,
                       pinned: true,
                       backgroundColor: const Color(0xFF121212),

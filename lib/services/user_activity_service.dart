@@ -79,6 +79,25 @@ class UserActivityService {
     return songs;
   }
 
+  Future<void> removeRecentSearchSong(String songId) async {
+    final normalizedId = songId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final items = await _readList(_recentSearchSongsKey);
+
+    final filtered = items
+        .where(
+          (e) =>
+              (e['id'] ?? e['song_id'] ?? '').toString().trim() != normalizedId,
+        )
+        .toList(growable: false);
+
+    await prefs.setString(_recentSearchSongsKey, jsonEncode(filtered));
+  }
+
   Future<List<Map<String, dynamic>>> _readList(String key) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(key);

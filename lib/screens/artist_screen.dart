@@ -96,6 +96,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
               : CustomScrollView(
                   slivers: [
                     SliverAppBar(
+                      automaticallyImplyLeading: false,
                       expandedHeight: 280,
                       pinned: true,
                       backgroundColor: const Color(0xFF121212),

@@ -132,6 +132,160 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  void _playLikedSongs({required bool shuffle}) {
+    if (_likedSongs.isEmpty) {
+      return;
+    }
+
+    final queue = List<Song>.from(_likedSongs);
+    if (shuffle && queue.length > 1) {
+      queue.shuffle();
+    }
+    widget.onSongSelected(queue.first, queue);
+  }
+
+  Widget _buildStatChip({required String label, required String value}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey[300], fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverviewCard() {
+    final cachedCount = _likedSongs.where(_isSongCached).length;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF13336E), Color(0xFF0F2146), Color(0xFF151515)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.favorite_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Liked Songs',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Your saved songs in one place',
+                      style: TextStyle(color: Colors.grey[300], fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatChip(
+                  label: 'Total songs',
+                  value: _likedSongs.length.toString(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildStatChip(
+                  label: 'Offline cached',
+                  value: cachedCount.toString(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _likedSongs.isEmpty
+                      ? null
+                      : () => _playLikedSongs(shuffle: false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                  label: const Text('Play all'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _likedSongs.isEmpty
+                      ? null
+                      : () => _playLikedSongs(shuffle: true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF0B3B8C),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.shuffle_rounded, size: 18),
+                  label: const Text('Shuffle'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _unlikeSong(Song song) async {
     final result = await _musicService.unlikeSong(song.id);
     if (!mounted) return;
@@ -266,9 +420,20 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
             )
           : _likedSongs.isEmpty
           ? Center(
-              child: Text(
-                'No liked songs yet',
-                style: TextStyle(color: Colors.grey[400], fontSize: 16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.favorite_border_rounded,
+                    color: Colors.grey[600],
+                    size: 58,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No liked songs yet',
+                    style: TextStyle(color: Colors.grey[300], fontSize: 16),
+                  ),
+                ],
               ),
             )
           : RefreshIndicator(
@@ -276,72 +441,93 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
               color: const Color(0xFF0B3B8C),
               child: ListView.builder(
                 padding: const EdgeInsets.only(bottom: 12),
-                itemCount: _likedSongs.length,
+                itemCount: _likedSongs.length + 1,
                 itemBuilder: (context, index) {
-                  final song = _likedSongs[index];
+                  if (index == 0) {
+                    return _buildOverviewCard();
+                  }
+
+                  final song = _likedSongs[index - 1];
                   final isCached = _isSongCached(song);
 
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: SongTile(
-                      song: song,
-                      onTap: () => widget.onSongSelected(song, _likedSongs),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isCached)
-                          const Padding(
-                            padding: EdgeInsets.only(right: 4),
-                            child: Icon(
-                              Icons.download_done_rounded,
-                              size: 16,
-                              color: Color(0xFF0B3B8C),
-                            ),
-                          ),
-                        PopupMenuButton<String>(
-                          onSelected: (value) async {
-                            if (value == 'add_to_playlist') {
-                              _showChoosePlaylistForSong(song);
-                            } else if (value == 'add_to_queue') {
-                              final messenger = ScaffoldMessenger.of(context);
-                              final added = await widget.onAddToQueue(
-                                song,
-                                _likedSongs,
-                              );
-                              if (!mounted) return;
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    added
-                                        ? 'Added to queue'
-                                        : 'Song is already in queue',
-                                  ),
-                                  backgroundColor: added
-                                      ? Colors.green[700]
-                                      : Colors.orange[700],
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1D1D1D),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.05),
+                        ),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 2,
+                        ),
+                        title: SongTile(
+                          song: song,
+                          onTap: () => widget.onSongSelected(song, _likedSongs),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isCached)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(
+                                  Icons.download_done_rounded,
+                                  size: 16,
+                                  color: Color(0xFF0B3B8C),
                                 ),
-                              );
-                            } else if (value == 'remove_liked') {
-                              _unlikeSong(song);
-                            }
-                          },
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(
-                              value: 'add_to_playlist',
-                              child: Text('Add to playlist'),
-                            ),
-                            PopupMenuItem(
-                              value: 'add_to_queue',
-                              child: Text('Add to queue'),
-                            ),
-                            PopupMenuItem(
-                              value: 'remove_liked',
-                              child: Text('Remove from liked songs'),
+                              ),
+                            PopupMenuButton<String>(
+                              onSelected: (value) async {
+                                if (value == 'add_to_playlist') {
+                                  _showChoosePlaylistForSong(song);
+                                } else if (value == 'add_to_queue') {
+                                  final messenger = ScaffoldMessenger.of(
+                                    context,
+                                  );
+                                  final added = await widget.onAddToQueue(
+                                    song,
+                                    _likedSongs,
+                                  );
+                                  if (!mounted) return;
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        added
+                                            ? 'Added to queue'
+                                            : 'Song is already in queue',
+                                      ),
+                                      backgroundColor: added
+                                          ? Colors.green[700]
+                                          : Colors.orange[700],
+                                    ),
+                                  );
+                                } else if (value == 'remove_liked') {
+                                  _unlikeSong(song);
+                                }
+                              },
+                              itemBuilder: (context) => const [
+                                PopupMenuItem(
+                                  value: 'add_to_playlist',
+                                  child: Text('Add to playlist'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'add_to_queue',
+                                  child: Text('Add to queue'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'remove_liked',
+                                  child: Text('Remove from liked songs'),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
                   );
                 },
