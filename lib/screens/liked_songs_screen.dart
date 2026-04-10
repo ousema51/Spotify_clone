@@ -61,9 +61,7 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          'Saved $count songs for offline library access. Streaming playback still requires internet for this source.',
-        ),
+        content: Text('Saved $count songs for offline library access.'),
         backgroundColor: Colors.green[700],
       ),
     );

@@ -6,7 +6,6 @@ class Song {
   final String? albumName;
   final String? coverUrl;
   final int? duration;
-  final String? streamUrl;
   final String? albumId;
 
   const Song({
@@ -17,7 +16,6 @@ class Song {
     this.albumName,
     this.coverUrl,
     this.duration,
-    this.streamUrl,
     this.albumId,
   });
 
@@ -35,8 +33,6 @@ class Song {
             json['coverUrl'],
       ),
       duration: _parseDuration(json['duration']),
-      streamUrl: (json['stream_url'] ?? json['streamUrl'] ?? json['audio_url'])
-          ?.toString(),
       albumId: _parseAlbumId(json['album']),
     );
   }
@@ -173,24 +169,6 @@ class Song {
       if (best is String) return best;
     }
     if (images is Map) return (images['url'] ?? images['link'])?.toString();
-    return null;
-  }
-
-  // ignore: unused_element
-  static String? _getBestStreamUrl(dynamic downloadUrls) {
-    if (downloadUrls == null) return null;
-    if (downloadUrls is String) return downloadUrls;
-    if (downloadUrls is List && downloadUrls.isNotEmpty) {
-      final best = downloadUrls.lastWhere(
-        (url) => url is Map && url['quality'] == '320kbps',
-        orElse: () => downloadUrls.last,
-      );
-      if (best is Map) return (best['url'] ?? best['link'])?.toString();
-      if (best is String) return best;
-    }
-    if (downloadUrls is Map) {
-      return (downloadUrls['url'] ?? downloadUrls['link'])?.toString();
-    }
     return null;
   }
 

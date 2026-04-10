@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
-import '../widgets/mini_player.dart';
-import '../widgets/full_player.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
 import 'library_screen.dart';
@@ -29,63 +26,401 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
-  bool _isFullPlayer = false;
   Song? _currentSong;
   final AuthService _authService = AuthService();
-  final PlayerService _player = PlayerService();
   final MusicService _musicService = MusicService();
-
-  List<Song> _playQueue = [];
+  final PlayerService _player = PlayerService();
+  int _playRequestNonce = 0;
+  final List<Song> _playQueue = [];
   int _queueIndex = -1;
-  bool _shuffleEnabled = false;
-  QueueRepeatMode _repeatMode = QueueRepeatMode.off;
-  bool _lastSelectionFromSearch = false;
-  bool _isHandlingEnded = false;
+
+  final List<Song> _queuedSongs = [];
+
   LibraryView _libraryView = LibraryView.library;
   String? _activePlaylistId;
   int _libraryRefreshKey = 0;
   BrowseView _browseView = BrowseView.none;
   String? _activeArtistId;
   String? _activeAlbumId;
-  int _loadRequestNonce = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _player.playbackStateNotifier.addListener(_onPlayerStateChanged);
-  }
-
-  @override
-  void dispose() {
-    _player.playbackStateNotifier.removeListener(_onPlayerStateChanged);
-    super.dispose();
-  }
-
-  void _onPlayerStateChanged() {
-    if (_player.playbackStateNotifier.value == PlayerPlaybackState.completed) {
-      _handleTrackEnded();
-    }
-  }
 
   void _onSongSelected(Song song, [List<Song>? queue]) {
-    _lastSelectionFromSearch = _selectedIndex == 1;
+    setState(() {
+      _primePlayQueue(song, queue);
+      _currentSong = song;
+    });
+    unawaited(_resolveAndPlaySong(song));
+    unawaited(_trackListen(song));
+  }
 
+  void _primePlayQueue(Song song, [List<Song>? queue]) {
     if (queue != null && queue.isNotEmpty) {
-      _playQueue = List<Song>.from(queue);
-      _queueIndex = _playQueue.indexWhere((s) => s.id == song.id);
-      if (_queueIndex < 0) {
+      _playQueue
+        ..clear()
+        ..addAll(queue);
+
+      final index = _playQueue.indexWhere((candidate) => _sameSong(candidate, song));
+      if (index >= 0) {
+        _queueIndex = index;
+      } else {
         _playQueue.insert(0, song);
         _queueIndex = 0;
       }
-    } else {
-      _playQueue = [song];
-      _queueIndex = 0;
+      return;
     }
 
-    setState(() => _currentSong = song);
-    final loadRequestId = ++_loadRequestNonce;
-    unawaited(_loadAndPlay(song, loadRequestId: loadRequestId));
-    _trackListen(song);
+    if (_playQueue.isEmpty) {
+      _playQueue.add(song);
+      _queueIndex = 0;
+      return;
+    }
+
+    final existing = _playQueue.indexWhere((candidate) => _sameSong(candidate, song));
+    if (existing >= 0) {
+      _queueIndex = existing;
+      return;
+    }
+
+    _playQueue.add(song);
+    _queueIndex = _playQueue.length - 1;
+  }
+
+  String _buildPlaybackQueryHint(Song song) {
+    final parts = <String>[
+      if ((song.artist ?? '').trim().isNotEmpty) (song.artist ?? '').trim(),
+      if (song.title.trim().isNotEmpty) song.title.trim(),
+    ];
+
+    final hint = parts.join(' ').trim();
+    if (hint.isNotEmpty) {
+      return hint;
+    }
+
+    return song.id.trim();
+  }
+
+  Future<void> _resolveAndPlaySong(Song song) async {
+    final requestId = ++_playRequestNonce;
+
+    try {
+      final streamResult = await _musicService.getStreamDataWithHint(
+        song.id,
+        queryHint: _buildPlaybackQueryHint(song),
+        titleHint: song.title,
+      );
+
+      if (!mounted || requestId != _playRequestNonce) {
+        return;
+      }
+
+      if (streamResult['success'] != true) {
+        final message = streamResult['message']?.toString() ?? 'Unable to resolve stream data';
+        _showPlaybackError(message);
+        return;
+      }
+
+      final dynamic rawData = streamResult['data'];
+      if (rawData is! Map) {
+        _showPlaybackError('Invalid stream response payload');
+        return;
+      }
+
+      final data = Map<String, dynamic>.from(rawData);
+      final audioUrl = (data['audio_url']?.toString() ?? '').trim();
+      if (audioUrl.isEmpty) {
+        _showPlaybackError('Missing audio URL for playback');
+        return;
+      }
+
+      final rawHeaders = data['headers'];
+      final headers = rawHeaders is Map<String, dynamic>
+          ? rawHeaders
+          : (rawHeaders is Map ? Map<String, dynamic>.from(rawHeaders) : null);
+
+      await _player.playStream(
+        song: song,
+        audioUrl: audioUrl,
+        headers: headers,
+      );
+    } catch (e) {
+      if (!mounted || requestId != _playRequestNonce) {
+        return;
+      }
+      _showPlaybackError('Playback failed: $e');
+    }
+  }
+
+  void _showPlaybackError(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red[700],
+      ),
+    );
+  }
+
+  bool get _canPlayNext {
+    if (_playQueue.isEmpty || _queueIndex < 0) {
+      return false;
+    }
+    return _queueIndex + 1 < _playQueue.length;
+  }
+
+  bool get _canPlayPrevious {
+    if (_playQueue.isEmpty || _queueIndex <= 0) {
+      return false;
+    }
+    return true;
+  }
+
+  bool get _hasPreviousSong {
+    if (_canPlayPrevious) {
+      return true;
+    }
+
+    final current = _currentSong;
+    if (current == null) {
+      return false;
+    }
+
+    final index = _queuedSongs.indexWhere((song) => _sameSong(song, current));
+    return index > 0;
+  }
+
+  bool get _hasNextSong {
+    if (_canPlayNext) {
+      return true;
+    }
+
+    final current = _currentSong;
+    if (current == null) {
+      return _queuedSongs.isNotEmpty;
+    }
+
+    final index = _queuedSongs.indexWhere((song) => _sameSong(song, current));
+    if (index >= 0) {
+      return index + 1 < _queuedSongs.length;
+    }
+
+    return _queuedSongs.any((song) => !_sameSong(song, current));
+  }
+
+  Future<void> _togglePlayPause() async {
+    if (_currentSong == null) {
+      return;
+    }
+
+    final state = _player.playbackStateNotifier.value;
+
+    try {
+      if (state == PlayerPlaybackState.playing) {
+        await _player.pause();
+        return;
+      }
+
+      if (state == PlayerPlaybackState.paused || state == PlayerPlaybackState.completed) {
+        await _player.play();
+        return;
+      }
+
+      await _resolveAndPlaySong(_currentSong!);
+    } catch (e) {
+      _showPlaybackError('Playback control failed: $e');
+    }
+  }
+
+  Future<void> _playNextSong() async {
+    if (_canPlayNext) {
+      final nextIndex = _queueIndex + 1;
+      final nextSong = _playQueue[nextIndex];
+      setState(() {
+        _queueIndex = nextIndex;
+        _currentSong = nextSong;
+      });
+      await _resolveAndPlaySong(nextSong);
+      unawaited(_trackListen(nextSong));
+      return;
+    }
+
+    final current = _currentSong;
+    if (current != null) {
+      final queuedIndex = _queuedSongs.indexWhere((song) => _sameSong(song, current));
+      if (queuedIndex >= 0 && queuedIndex + 1 < _queuedSongs.length) {
+        final nextSong = _queuedSongs[queuedIndex + 1];
+        setState(() {
+          _currentSong = nextSong;
+        });
+        await _resolveAndPlaySong(nextSong);
+        unawaited(_trackListen(nextSong));
+        return;
+      }
+    }
+
+    for (final queued in _queuedSongs) {
+      if (_currentSong != null && _sameSong(queued, _currentSong!)) {
+        continue;
+      }
+      setState(() {
+        _currentSong = queued;
+      });
+      await _resolveAndPlaySong(queued);
+      unawaited(_trackListen(queued));
+      return;
+    }
+
+    _showPlaybackError('No next song available in queue');
+  }
+
+  Future<void> _playPreviousSong() async {
+    if (_canPlayPrevious) {
+      final previousIndex = _queueIndex - 1;
+      final previousSong = _playQueue[previousIndex];
+      setState(() {
+        _queueIndex = previousIndex;
+        _currentSong = previousSong;
+      });
+      await _resolveAndPlaySong(previousSong);
+      unawaited(_trackListen(previousSong));
+      return;
+    }
+
+    final current = _currentSong;
+    if (current != null) {
+      final queuedIndex = _queuedSongs.indexWhere((song) => _sameSong(song, current));
+      if (queuedIndex > 0) {
+        final previousSong = _queuedSongs[queuedIndex - 1];
+        setState(() {
+          _currentSong = previousSong;
+        });
+        await _resolveAndPlaySong(previousSong);
+        unawaited(_trackListen(previousSong));
+        return;
+      }
+    }
+
+    _showPlaybackError('No previous song available in queue');
+  }
+
+  Widget _buildPlaybackControls() {
+    final song = _currentSong;
+    if (song == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border(
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  song.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                ValueListenableBuilder<PlayerPlaybackState>(
+                  valueListenable: _player.playbackStateNotifier,
+                  builder: (context, state, child) {
+                    final isLoading = state == PlayerPlaybackState.loading;
+                    if (isLoading) {
+                      return Row(
+                        children: [
+                          const SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Buffering...',
+                            style: TextStyle(
+                              color: Colors.grey[300],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Text(
+                      song.artist ?? 'Unknown Artist',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 12,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          ValueListenableBuilder<PlayerPlaybackState>(
+            valueListenable: _player.playbackStateNotifier,
+            builder: (context, state, child) {
+              final isLoading = state == PlayerPlaybackState.loading;
+              final isPlaying = state == PlayerPlaybackState.playing;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: isLoading || !_hasPreviousSong
+                        ? null
+                        : () => unawaited(_playPreviousSong()),
+                    icon: Icon(
+                      Icons.skip_previous_rounded,
+                      color: _hasPreviousSong ? Colors.white : Colors.grey[600],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: isLoading ? null : () => unawaited(_togglePlayPause()),
+                    icon: isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                          ),
+                  ),
+                  IconButton(
+                    onPressed: isLoading || !_hasNextSong
+                        ? null
+                        : () => unawaited(_playNextSong()),
+                    icon: Icon(
+                      Icons.skip_next_rounded,
+                      color: _hasNextSong ? Colors.white : Colors.grey[600],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _trackListen(Song song) async {
@@ -99,328 +434,25 @@ class _MainScreenState extends State<MainScreen> {
     } catch (_) {}
   }
 
-  Map<String, String>? _buildStreamHeaders(dynamic rawHeaders) {
-    if (rawHeaders is! Map) return null;
-
-    final headers = rawHeaders.map(
-      (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-    )..removeWhere((key, value) => key.trim().isEmpty || value.trim().isEmpty);
-
-    return headers.isEmpty ? null : headers;
-  }
-
-  String _buildPlaybackHint(Song song) {
-    final hint = '${song.title} ${song.artist ?? ''}'.trim();
-    return hint.isEmpty ? song.title : hint;
-  }
-
-  int _nextLoadRequestId() => ++_loadRequestNonce;
-
-  bool _isStaleLoadRequest(int requestId) => requestId != _loadRequestNonce;
-
-  Song _mergeResolvedCandidate(Song original, Song candidate) {
-    return Song(
-      id: candidate.id,
-      title: original.title.isNotEmpty ? original.title : candidate.title,
-      artist: original.artist ?? candidate.artist,
-      artists: original.artists ?? candidate.artists,
-      albumName: original.albumName ?? candidate.albumName,
-      coverUrl: original.coverUrl ?? candidate.coverUrl,
-      duration: original.duration ?? candidate.duration,
-      streamUrl: original.streamUrl ?? candidate.streamUrl,
-      albumId: original.albumId ?? candidate.albumId,
-    );
-  }
-
-  Future<bool> _loadSongFromStream(
-    Song song, {
-    required int loadRequestId,
-  }) async {
-    if (_isStaleLoadRequest(loadRequestId)) return false;
-
-    final streamData = await _musicService
-        .getStreamDataWithHint(song.id, _buildPlaybackHint(song))
-        .timeout(const Duration(seconds: 12));
-
-    if (_isStaleLoadRequest(loadRequestId)) return false;
-
-    final streamUrl = streamData?['audio_url']?.toString().trim();
-    final streamHeaders = _buildStreamHeaders(streamData?['headers']);
-
-    if (streamUrl == null || streamUrl.isEmpty) {
-      throw StateError('No playable stream found for "${song.title}"');
+  bool _sameSong(Song a, Song b) {
+    if (a.id.isNotEmpty && b.id.isNotEmpty) {
+      return a.id == b.id;
     }
-
-    await _player.loadSong(
-      song,
-      streamUrl: streamUrl,
-      streamHeaders: streamHeaders,
-    );
-
-    return !_isStaleLoadRequest(loadRequestId);
-  }
-
-  List<String> _buildFallbackQueries(Song song) {
-    final artist = (song.artist ?? '').trim();
-    final title = song.title.trim();
-    final album = (song.albumName ?? '').trim();
-
-    final queries = <String>[
-      _buildPlaybackHint(song),
-      title,
-      if (artist.isNotEmpty) '$artist $title',
-      if (album.isNotEmpty) '$artist $title $album',
-      '$title official audio',
-    ];
-
-    final seen = <String>{};
-    return queries
-        .map((q) => q.trim())
-        .where((q) => q.isNotEmpty && seen.add(q.toLowerCase()))
-        .toList(growable: false);
-  }
-
-  Future<void> _loadAndPlay(Song song, {int? loadRequestId}) async {
-    final requestId = loadRequestId ?? _nextLoadRequestId();
-    if (_isStaleLoadRequest(requestId)) return;
-
-    debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
-
-    final attemptedIds = <String>{};
-    final primaryId = song.id.trim();
-    if (primaryId.isNotEmpty) {
-      attemptedIds.add(primaryId);
-    }
-
-    try {
-      final loaded = await _loadSongFromStream(song, loadRequestId: requestId);
-      if (loaded) return;
-
-      if (_isStaleLoadRequest(requestId)) return;
-    } catch (e) {
-      debugPrint('[MainScreen] Primary playback attempt failed: $e');
-      if (_isStaleLoadRequest(requestId)) return;
-    }
-
-    final fallbackQueries = _buildFallbackQueries(song);
-    if (fallbackQueries.isNotEmpty) {
-      try {
-        final pooled = <Song>[];
-        for (final query in fallbackQueries) {
-          if (_isStaleLoadRequest(requestId)) return;
-
-          try {
-            final hits = await _musicService
-                .searchSongs(query)
-                .timeout(const Duration(seconds: 6));
-            for (final hit in hits) {
-              final candidateId = hit.id.trim();
-              if (candidateId.isEmpty || attemptedIds.contains(candidateId)) {
-                continue;
-              }
-              attemptedIds.add(candidateId);
-              pooled.add(hit);
-              if (pooled.length >= 30) break;
-            }
-            if (pooled.length >= 30) break;
-          } catch (searchError) {
-            debugPrint(
-              '[MainScreen] Fallback search query failed ($query): $searchError',
-            );
-          }
-        }
-
-        for (final candidate in pooled) {
-          if (_isStaleLoadRequest(requestId)) return;
-
-          final resolvedSong = _mergeResolvedCandidate(song, candidate);
-          try {
-            final loaded = await _loadSongFromStream(
-              resolvedSong,
-              loadRequestId: requestId,
-            );
-            if (!loaded) return;
-
-            if (mounted) {
-              setState(() {
-                _currentSong = resolvedSong;
-                if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
-                  _playQueue[_queueIndex] = resolvedSong;
-                }
-              });
-            } else {
-              _currentSong = resolvedSong;
-              if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
-                _playQueue[_queueIndex] = resolvedSong;
-              }
-            }
-
-            debugPrint(
-              '[MainScreen] Playback recovered with fallback ID: ${candidate.id}',
-            );
-            return;
-          } catch (innerError) {
-            if (_isStaleLoadRequest(requestId)) return;
-            debugPrint(
-              '[MainScreen] Fallback candidate failed (${candidate.title}/${candidate.id}): $innerError',
-            );
-          }
-        }
-      } catch (searchError) {
-        if (_isStaleLoadRequest(requestId)) return;
-        debugPrint('[MainScreen] Fallback search failed: $searchError');
-      }
-    }
-
-    if (mounted && !_isStaleLoadRequest(requestId)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Playback error: unable to resolve a playable stream'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Future<void> _handleTrackEnded() async {
-    if (_isHandlingEnded || _currentSong == null) return;
-    _isHandlingEnded = true;
-
-    try {
-      if (_repeatMode == QueueRepeatMode.one) {
-        await _loadAndPlay(_currentSong!);
-        return;
-      }
-
-      final next = await _resolveNextSongAfterEnd();
-      if (next != null) {
-        setState(() => _currentSong = next);
-        await _loadAndPlay(next);
-      }
-    } finally {
-      _isHandlingEnded = false;
-    }
-  }
-
-  Future<Song?> _resolveNextSongAfterEnd() async {
-    if (_playQueue.isNotEmpty && _queueIndex >= 0) {
-      if (_shuffleEnabled && _playQueue.length > 1) {
-        final rand = Random();
-        int nextIndex = _queueIndex;
-        while (nextIndex == _queueIndex) {
-          nextIndex = rand.nextInt(_playQueue.length);
-        }
-        _queueIndex = nextIndex;
-        return _playQueue[_queueIndex];
-      }
-
-      final int nextIndex = _queueIndex + 1;
-      if (nextIndex < _playQueue.length) {
-        _queueIndex = nextIndex;
-        return _playQueue[_queueIndex];
-      }
-
-      if (_repeatMode == QueueRepeatMode.all && _playQueue.isNotEmpty) {
-        _queueIndex = 0;
-        return _playQueue[_queueIndex];
-      }
-    }
-
-    if (_lastSelectionFromSearch && _currentSong != null) {
-      final query = '${_currentSong!.artist ?? ''} ${_currentSong!.title}'
-          .trim();
-      if (query.isNotEmpty) {
-        final similar = await _musicService.searchSongs(query);
-        final filtered = similar
-            .where((s) => s.id != _currentSong!.id)
-            .toList(growable: false);
-        if (filtered.isNotEmpty) {
-          _playQueue = filtered;
-          _queueIndex = 0;
-          return _playQueue.first;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  Future<void> _playNextSong() async {
-    final next = await _resolveNextSongAfterEnd();
-    if (next != null) {
-      setState(() => _currentSong = next);
-      await _loadAndPlay(next);
-    }
-  }
-
-  Future<void> _playPreviousSong() async {
-    if (_playQueue.isEmpty || _queueIndex < 0) return;
-
-    if (_shuffleEnabled && _playQueue.length > 1) {
-      final rand = Random();
-      int prevIndex = _queueIndex;
-      while (prevIndex == _queueIndex) {
-        prevIndex = rand.nextInt(_playQueue.length);
-      }
-      _queueIndex = prevIndex;
-      final song = _playQueue[_queueIndex];
-      setState(() => _currentSong = song);
-      await _loadAndPlay(song);
-      return;
-    }
-
-    final prevIndex = _queueIndex - 1;
-    if (prevIndex >= 0) {
-      _queueIndex = prevIndex;
-      final song = _playQueue[_queueIndex];
-      setState(() => _currentSong = song);
-      await _loadAndPlay(song);
-      return;
-    }
-
-    if (_repeatMode == QueueRepeatMode.all && _playQueue.isNotEmpty) {
-      _queueIndex = _playQueue.length - 1;
-      final song = _playQueue[_queueIndex];
-      setState(() => _currentSong = song);
-      await _loadAndPlay(song);
-    }
+    return a.title == b.title && (a.artist ?? '') == (b.artist ?? '');
   }
 
   Future<bool> _addSongToQueue(Song song, [List<Song>? sourceQueue]) async {
-    final bool alreadyQueued = _playQueue.any((s) => s.id == song.id);
+    final alreadyQueued = _queuedSongs.any((existing) => _sameSong(existing, song));
     if (alreadyQueued) {
       return false;
     }
 
     setState(() {
-      _playQueue.add(song);
-      if (_queueIndex < 0 && _currentSong == null) {
-        _queueIndex = 0;
-      }
+      _queuedSongs.add(song);
+      _currentSong ??= song;
     });
-
-    // If nothing is currently playing, start the queued song immediately.
-    if (_currentSong == null) {
-      setState(() => _currentSong = song);
-      await _loadAndPlay(song);
-    }
 
     return true;
-  }
-
-  void _toggleShuffle() {
-    setState(() => _shuffleEnabled = !_shuffleEnabled);
-  }
-
-  void _cycleRepeatMode() {
-    setState(() {
-      _repeatMode = QueueRepeatMode
-          .values[(_repeatMode.index + 1) % QueueRepeatMode.values.length];
-    });
-  }
-
-  void _toggleFullPlayer() {
-    setState(() => _isFullPlayer = !_isFullPlayer);
   }
 
   void _openPlaylist(String playlistId) {
@@ -462,29 +494,6 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  Future<void> _openArtistFromName(String? artistName) async {
-    final name = (artistName ?? '').trim();
-    if (name.isEmpty) return;
-
-    final artists = await _musicService.searchArtists(name);
-    if (artists.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Artist page not found'),
-          backgroundColor: Colors.orange[700],
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isFullPlayer = false;
-      _activeArtistId = artists.first.id;
-      _browseView = BrowseView.artist;
-    });
-  }
-
   void _closeBrowseView() {
     setState(() {
       _browseView = BrowseView.none;
@@ -509,6 +518,12 @@ class _MainScreenState extends State<MainScreen> {
     if (mounted) {
       _openLogin();
     }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_player.stop());
+    super.dispose();
   }
 
   @override
@@ -601,7 +616,7 @@ class _MainScreenState extends State<MainScreen> {
           body: Column(
             children: [
               bodyContent,
-              MiniPlayer(onTap: _toggleFullPlayer, currentSong: _currentSong),
+              if (_currentSong != null) _buildPlaybackControls(),
             ],
           ),
           bottomNavigationBar: BottomNavigationBar(
@@ -638,18 +653,6 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
         ),
-        if (_isFullPlayer)
-          FullPlayerScreen(
-            onClose: _toggleFullPlayer,
-            currentSong: _currentSong,
-            isShuffle: _shuffleEnabled,
-            repeatMode: _repeatMode,
-            onToggleShuffle: _toggleShuffle,
-            onCycleRepeatMode: _cycleRepeatMode,
-            onNext: _playNextSong,
-            onPrevious: _playPreviousSong,
-            onArtistTap: _openArtistFromName,
-          ),
         if (_browseView != BrowseView.none)
           Positioned(
             top: 12,

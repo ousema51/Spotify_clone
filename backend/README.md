@@ -23,7 +23,7 @@ backend/
 ├── models/
 │   └── db.py             # MongoDB connection + collection references
 ├── utils/
-│   └── youtube_music.py  # YouTube Music helper functions (ytmusicapi + Piped)
+│   └── youtube_music.py  # YouTube Music helper functions (ytmusicapi)
 ├── requirements.txt
 ├── vercel.json
 ├── .env.example
@@ -61,7 +61,6 @@ cp .env.example .env
 |---------------------|----------------------------------------------------------|
 | `MONGODB_URI`       | MongoDB Atlas connection string                          |
 | `JWT_SECRET`        | Secret key used to sign JWT tokens (keep this secret!)   |
-| `PIPED_INSTANCES`     | List of Piped instances used for client-side stream resolution |
 
 ### 3. Run locally
 
