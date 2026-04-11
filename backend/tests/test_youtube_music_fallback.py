@@ -233,7 +233,7 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         status_url = mocked_get.call_args[0][0]
         self.assertIn("/status/req-123", status_url)
 
-    def test_resolve_stream_from_external_api_ajax_download_php_flow(self):
+    def test_resolve_stream_from_external_api_download_mp3_get_flow(self):
         class FakeResponse:
             def __init__(self, status_code, payload):
                 self.status_code = status_code
@@ -254,8 +254,8 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
             {
                 "YTDLP_PROVIDER": "rapidapi",
                 "YTDLP_RAPIDAPI_KEY": "key",
-                "YTDLP_RAPIDAPI_HOST": "youtube-info-download-api.p.rapidapi.com",
-                "YTDLP_RAPIDAPI_URL": "https://youtube-info-download-api.p.rapidapi.com/ajax/download.php",
+                "YTDLP_RAPIDAPI_HOST": "youtube-mp310.p.rapidapi.com",
+                "YTDLP_RAPIDAPI_URL": "https://youtube-mp310.p.rapidapi.com/download/mp3",
             },
             clear=False,
         ):
@@ -267,15 +267,10 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         self.assertEqual(result["data"]["external_method"], "GET")
 
         called_url = mocked_get.call_args[0][0]
-        self.assertIn("/ajax/download.php", called_url)
+        self.assertIn("/download/mp3", called_url)
 
         called_params = mocked_get.call_args[1].get("params", {})
-        self.assertEqual(called_params.get("format"), "mp3")
-        self.assertEqual(called_params.get("add_info"), "0")
-        self.assertEqual(called_params.get("audio_quality"), "128")
-        self.assertEqual(called_params.get("allow_extended_duration"), "false")
-        self.assertEqual(called_params.get("no_merge"), "false")
-        self.assertEqual(called_params.get("audio_language"), "en")
+        self.assertEqual(set(called_params.keys()), {"url"})
         self.assertIn("youtube.com/watch?v=Ckom3gf57Yw", called_params.get("url", ""))
 
 

@@ -509,13 +509,13 @@ def _get_rapidapi_key():
 
 
 def _get_rapidapi_host():
-    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-info-download-api.p.rapidapi.com").strip()
+    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-mp310.p.rapidapi.com").strip()
 
 
 def _get_rapidapi_url():
     return (
         os.environ.get("YTDLP_RAPIDAPI_URL")
-        or "https://youtube-info-download-api.p.rapidapi.com/ajax/download.php"
+        or "https://youtube-mp310.p.rapidapi.com/download/mp3"
     ).strip()
 
 
@@ -845,7 +845,11 @@ def _resolve_stream_from_external_api(video_id):
         "content-type": "application/json",
     }
 
-    default_timeout = 60 if ("youtube-mp3-audio-video-downloader" in host or "youtube-info-download-api" in host) else 20
+    default_timeout = 60 if (
+        "youtube-mp3-audio-video-downloader" in host
+        or "youtube-info-download-api" in host
+        or "youtube-mp310" in host
+    ) else 20
     timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", default_timeout))
 
     last_error = None
@@ -869,6 +873,7 @@ def _resolve_stream_from_external_api(video_id):
 
         lower_endpoint = endpoint_value.lower()
         is_ajax_download_php = "/ajax/download.php" in lower_endpoint or "/download.php" in lower_endpoint
+        is_download_mp3_get = "/download/mp3" in lower_endpoint
 
         if is_ajax_download_php:
             params = dict(params or {})
@@ -885,6 +890,9 @@ def _resolve_stream_from_external_api(video_id):
             )
             params["no_merge"] = (os.environ.get("YTDLP_RAPIDAPI_NO_MERGE") or "false").strip() or "false"
             params["audio_language"] = (os.environ.get("YTDLP_RAPIDAPI_AUDIO_LANGUAGE") or "en").strip() or "en"
+        elif is_download_mp3_get:
+            params = dict(params or {})
+            params["url"] = target_url
         elif "/download" in lower_endpoint:
             method = "POST"
             params = dict(params or {"url": target_url})

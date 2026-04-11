@@ -68,16 +68,16 @@ cp .env.example .env
 | `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
 | `YTDLP_PROVIDER`    | Set to `rapidapi` to prefer external yt-dlp API          |
 | `YTDLP_RAPIDAPI_KEY`| RapidAPI key for external yt-dlp API                     |
-| `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `youtube-info-download-api.p.rapidapi.com`)    |
-| `YTDLP_RAPIDAPI_URL`| RapidAPI primary endpoint URL (default `https://youtube-info-download-api.p.rapidapi.com/ajax/download.php`) |
+| `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `youtube-mp310.p.rapidapi.com`)    |
+| `YTDLP_RAPIDAPI_URL`| RapidAPI primary endpoint URL (default `https://youtube-mp310.p.rapidapi.com/download/mp3`) |
 | `YTDLP_RAPIDAPI_STATUS_URL`| Optional status endpoint URL for request-id polling (used by status-based providers) |
 | `YTDLP_RAPIDAPI_FORMAT`| Requested format for RapidAPI download requests (default `mp3`) |
-| `YTDLP_RAPIDAPI_AUDIO_QUALITY`| Requested `audio_quality` for `ajax/download.php` (default `128`) |
+| `YTDLP_RAPIDAPI_AUDIO_QUALITY`| Legacy option for `ajax/download.php` providers (default `128`) |
 | `YTDLP_RAPIDAPI_QUALITY`| Legacy quality fallback used when `YTDLP_RAPIDAPI_AUDIO_QUALITY` is unset |
-| `YTDLP_RAPIDAPI_ADD_INFO`| `add_info` query value for `ajax/download.php` (default `0`) |
-| `YTDLP_RAPIDAPI_ALLOW_EXTENDED_DURATION`| `allow_extended_duration` query value (default `false`) |
-| `YTDLP_RAPIDAPI_NO_MERGE`| `no_merge` query value (default `false`) |
-| `YTDLP_RAPIDAPI_AUDIO_LANGUAGE`| `audio_language` query value (default `en`) |
+| `YTDLP_RAPIDAPI_ADD_INFO`| Legacy option for `ajax/download.php` providers (default `0`) |
+| `YTDLP_RAPIDAPI_ALLOW_EXTENDED_DURATION`| Legacy option for `ajax/download.php` providers (default `false`) |
+| `YTDLP_RAPIDAPI_NO_MERGE`| Legacy option for `ajax/download.php` providers (default `false`) |
+| `YTDLP_RAPIDAPI_AUDIO_LANGUAGE`| Legacy option for `ajax/download.php` providers (default `en`) |
 | `YTDLP_RAPIDAPI_CALLBACK_URL`| Optional callback URL forwarded to provider |
 | `YTDLP_EXTERNAL_TIMEOUT_SECONDS`| External API timeout in seconds (default `60` for this provider) |
 | `YTDLP_RAPIDAPI_TRY_ALT_PATHS` | `1` to probe alternate RapidAPI paths if default URL fails |
@@ -92,7 +92,7 @@ The backend also auto-converts raw `Cookie:` header strings into Netscape cookie
 
 If yt-dlp still fails (for example YouTube bot challenge), backend automatically falls back to Piped stream resolution. You can override instances via `PIPED_INSTANCES` (comma-separated URLs).
 
-When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend resolves streams using only the external provider endpoint. By default it calls `GET /ajax/download.php` on `youtube-info-download-api.p.rapidapi.com` with query parameters including `format=mp3`, `add_info=0`, `audio_quality=128`, `allow_extended_duration=false`, `no_merge=false`, and `audio_language=en`.
+When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend resolves streams using only the external provider endpoint. By default it calls `GET /download/mp3` on `youtube-mp310.p.rapidapi.com` with the `url` query parameter set to the YouTube watch URL.
 
 ### 3. Run locally
 
