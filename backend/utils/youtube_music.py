@@ -559,6 +559,18 @@ def _allow_local_ytdlp_fallback():
     return raw in ("1", "true", "yes", "on")
 
 
+def _is_session_bound_download_url(audio_url):
+    value = (_safe_str(audio_url) or "").strip().lower()
+    if not value:
+        return False
+
+    markers = (
+        "://robotilab.online/download-api/yt/audio",
+        "://www.robotilab.online/download-api/yt/audio",
+    )
+    return any(marker in value for marker in markers)
+
+
 def _pick_best_audio_url_from_formats(formats):
     if not isinstance(formats, list):
         return None
@@ -1595,7 +1607,7 @@ def get_stream_url(video_id=""):
         return {
             "success": False,
             "error_code": "external_disabled",
-            "message": "External provider mode is required (youtube-mp3-audio-video-downloader)",
+            "message": "External provider mode is required (rapidapi)",
         }
 
     external_result = _resolve_stream_from_external_api(resolved_id)
@@ -1603,6 +1615,37 @@ def get_stream_url(video_id=""):
         data = external_result.get("data") or {}
         if not data.get("video_id"):
             data["video_id"] = resolved_id
+
+        # Some providers return intermediate session-bound download URLs that are
+        # not directly fetchable from backend/proxy requests.
+        if _is_session_bound_download_url(data.get("audio_url")):
+            piped_result = _resolve_stream_from_piped(resolved_id)
+            if piped_result.get("success"):
+                fallback_data = piped_result.get("data") or {}
+                fallback_data.setdefault("video_id", resolved_id)
+                fallback_data["fallback_reason"] = "external_invalid_session"
+                fallback_data["fallback_source"] = "piped"
+                fallback_data["upstream_source"] = data.get("source") or "rapidapi-yt-dlp"
+                _stream_cache_set(resolved_id, fallback_data)
+                return {"success": True, "data": fallback_data}
+
+            local_target = "https://www.youtube.com/watch?v={}".format(resolved_id)
+            local_result = _resolve_stream_from_yt_dlp(local_target, from_search=False)
+            if local_result.get("success"):
+                fallback_data = local_result.get("data") or {}
+                fallback_data.setdefault("video_id", resolved_id)
+                fallback_data["fallback_reason"] = "external_invalid_session"
+                fallback_data["fallback_source"] = "local_yt_dlp"
+                fallback_data["upstream_source"] = data.get("source") or "rapidapi-yt-dlp"
+                _stream_cache_set(resolved_id, fallback_data)
+                return {"success": True, "data": fallback_data}
+
+            return {
+                "success": False,
+                "error_code": "external_invalid_session",
+                "message": "External provider returned a session-bound download URL (Invalid Session).",
+            }
+
         _stream_cache_set(resolved_id, data)
         external_result["data"] = data
         return external_result

@@ -94,6 +94,8 @@ If yt-dlp still fails (for example YouTube bot challenge), backend automatically
 
 When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend resolves streams using only the external provider endpoint. By default it calls `GET /download/mp3` on `youtube-mp310.p.rapidapi.com` with the `url` query parameter set to the YouTube watch URL.
 
+If a provider returns a session-bound intermediate URL (for example links that fail with `Invalid Session` when fetched by backend proxy), backend automatically falls back to Piped stream resolution and then local yt-dlp extraction when available.
+
 ### 3. Run locally
 
 ```bash

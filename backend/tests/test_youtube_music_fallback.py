@@ -118,6 +118,72 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         mocked_piped.assert_called_once()
         mocked_local.assert_not_called()
 
+    def test_get_stream_url_uses_piped_fallback_on_external_invalid_session_url(self):
+        external_success = {
+            "success": True,
+            "data": {
+                "audio_url": "https://robotilab.online/download-api/yt/audio?url=https://www.youtube.com/watch?v=GwrLUr01NOY",
+                "headers": {},
+                "video_id": "GwrLUr01NOY",
+                "source": "rapidapi-yt-dlp",
+            },
+        }
+        piped_success = {
+            "success": True,
+            "data": {
+                "audio_url": "https://piped.example/audio.webm",
+                "headers": {},
+                "video_id": "GwrLUr01NOY",
+                "source": "piped",
+            },
+        }
+
+        with patch.dict(os.environ, {"YTDLP_PROVIDER": "rapidapi", "YTDLP_RAPIDAPI_KEY": "key"}, clear=False):
+            with patch.object(youtube_music, "_resolve_stream_from_external_api", return_value=external_success):
+                with patch.object(youtube_music, "_resolve_stream_from_piped", return_value=piped_success) as mocked_piped:
+                    result = youtube_music.get_stream_url("GwrLUr01NOY")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["audio_url"], "https://piped.example/audio.webm")
+        self.assertEqual(result["data"].get("fallback_reason"), "external_invalid_session")
+        self.assertEqual(result["data"].get("fallback_source"), "piped")
+        mocked_piped.assert_called_once()
+
+    def test_get_stream_url_uses_local_fallback_on_external_invalid_session_url_when_piped_fails(self):
+        external_success = {
+            "success": True,
+            "data": {
+                "audio_url": "https://robotilab.online/download-api/yt/audio?url=https://www.youtube.com/watch?v=GwrLUr01NOY",
+                "headers": {},
+                "video_id": "GwrLUr01NOY",
+                "source": "rapidapi-yt-dlp",
+            },
+        }
+        local_success = {
+            "success": True,
+            "data": {
+                "audio_url": "https://local.example/audio.m4a",
+                "headers": {},
+                "video_id": "GwrLUr01NOY",
+                "source": "local_yt_dlp",
+            },
+        }
+
+        with patch.dict(os.environ, {"YTDLP_PROVIDER": "rapidapi", "YTDLP_RAPIDAPI_KEY": "key"}, clear=False):
+            with patch.object(youtube_music, "_resolve_stream_from_external_api", return_value=external_success):
+                with patch.object(
+                    youtube_music,
+                    "_resolve_stream_from_piped",
+                    return_value={"success": False, "message": "piped unavailable"},
+                ):
+                    with patch.object(youtube_music, "_resolve_stream_from_yt_dlp", return_value=local_success):
+                        result = youtube_music.get_stream_url("GwrLUr01NOY")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["audio_url"], "https://local.example/audio.m4a")
+        self.assertEqual(result["data"].get("fallback_reason"), "external_invalid_session")
+        self.assertEqual(result["data"].get("fallback_source"), "local_yt_dlp")
+
     def test_get_stream_from_search_skips_region_restricted_candidate(self):
         with patch.object(
             youtube_music,
