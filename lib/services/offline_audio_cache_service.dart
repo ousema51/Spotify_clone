@@ -46,9 +46,13 @@ class OfflineAudioCacheService {
   OfflineAudioCacheService._internal();
 
   static const String _indexKey = 'offline_audio_cache_index_v1';
-  static const int _minValidFileBytes = 64 * 1024;
+  static const int _minValidFileBytes = 16 * 1024;
   static const int _maxCacheBytes = 1024 * 1024 * 1024;
   static const int _pruneTargetBytes = 900 * 1024 * 1024;
+  static const int _maxRetriesPerSong = 2;
+  static const Duration _betweenSongsDelay = Duration(milliseconds: 120);
+  static const Duration _retryBaseDelay = Duration(milliseconds: 700);
+  static const Duration _streamChunkTimeout = Duration(seconds: 25);
 
   final MusicService _musicService = MusicService();
   final http.Client _httpClient = http.Client();
@@ -235,7 +239,7 @@ class OfflineAudioCacheService {
     );
 
     for (final song in uniqueSongs.values) {
-      final result = await cacheSongIfMissing(song);
+      final result = await _cacheSongWithRetries(song);
       final success = result['success'] == true;
       AudioCacheItemStatus itemStatus;
 
@@ -243,7 +247,8 @@ class OfflineAudioCacheService {
         failed++;
         itemStatus = AudioCacheItemStatus.failed;
         final message = result['message']?.toString() ?? 'Unknown error';
-        failures.add('${song.title}: $message');
+        final attempts = _toInt(result['attempts']) ?? 1;
+        failures.add('${song.title}: $message (attempts: $attempts)');
       } else if (result['downloaded'] == true) {
         downloaded++;
         itemStatus = AudioCacheItemStatus.downloaded;
@@ -265,6 +270,10 @@ class OfflineAudioCacheService {
           currentStatus: itemStatus,
         ),
       );
+
+      if (processed < total) {
+        await Future<void>.delayed(_betweenSongsDelay);
+      }
     }
 
     return {
@@ -333,7 +342,14 @@ class OfflineAudioCacheService {
       var bytesWritten = 0;
       final sink = tempFile.openWrite(mode: FileMode.writeOnly);
       try {
-        await for (final chunk in response.stream) {
+        await for (final chunk in response.stream.timeout(
+          _streamChunkTimeout,
+          onTimeout: (eventSink) {
+            eventSink.addError(
+              TimeoutException('Download stream stalled for too long'),
+            );
+          },
+        )) {
           bytesWritten += chunk.length;
           sink.add(chunk);
         }
@@ -692,5 +708,83 @@ class OfflineAudioCacheService {
         await file.delete();
       }
     } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> _cacheSongWithRetries(Song song) async {
+    Map<String, dynamic> lastResult = <String, dynamic>{
+      'success': false,
+      'message': 'Unknown caching error',
+      'attempts': 0,
+    };
+
+    final random = Random();
+    for (var attempt = 0; attempt <= _maxRetriesPerSong; attempt++) {
+      lastResult = await cacheSongIfMissing(song);
+      lastResult['attempts'] = attempt + 1;
+
+      if (lastResult['success'] == true) {
+        return lastResult;
+      }
+
+      final message = (lastResult['message'] ?? '').toString();
+      final canRetry =
+          attempt < _maxRetriesPerSong && _isRetriableError(message);
+      if (!canRetry) {
+        return lastResult;
+      }
+
+      final delay = _retryDelayForAttempt(attempt, random);
+      await Future<void>.delayed(delay);
+    }
+
+    return lastResult;
+  }
+
+  Duration _retryDelayForAttempt(int attempt, Random random) {
+    final multiplier = 1 << attempt;
+    final baseMs = _retryBaseDelay.inMilliseconds * multiplier;
+    final jitterMs = random.nextInt(250);
+    return Duration(milliseconds: baseMs + jitterMs);
+  }
+
+  bool _isRetriableError(String message) {
+    final normalized = message.toLowerCase();
+    if (normalized.isEmpty) {
+      return false;
+    }
+
+    const transientTokens = <String>[
+      'timed out',
+      'timeout',
+      'socket',
+      'network',
+      'connection',
+      'failed host lookup',
+      'download stream stalled',
+      'unable to resolve stream',
+      'stream request failed',
+      'request failed',
+    ];
+
+    for (final token in transientTokens) {
+      if (normalized.contains(token)) {
+        return true;
+      }
+    }
+
+    final statusMatch = RegExp(r'status\s*(\d{3})').firstMatch(normalized);
+    if (statusMatch != null) {
+      final code = int.tryParse(statusMatch.group(1) ?? '');
+      if (code != null) {
+        if (code == 403 || code == 408 || code == 425 || code == 429) {
+          return true;
+        }
+        if (code >= 500) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 }

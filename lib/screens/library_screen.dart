@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
+import '../services/network_status_service.dart';
 import '../services/offline_audio_cache_service.dart';
 import '../services/offline_library_service.dart';
 import '../services/music_service.dart';
@@ -26,11 +27,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final AuthService _authService = AuthService();
   final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
   final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   List<Song> _likedSongs = [];
   List<Map<String, dynamic>> _playlists = [];
   final Set<String> _playlistDownloadsInProgress = <String>{};
   bool _isLoading = true;
   bool _isLoggedIn = false;
+  bool _isOfflineMode = false;
 
   @override
   void initState() {
@@ -43,26 +46,55 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _isLoggedIn = await _authService.isLoggedIn();
 
     if (_isLoggedIn) {
-      List<Song> likedSongs = [];
-      List<Map<String, dynamic>> playlists = [];
+      final cachedLikedSongs = await _offlineLibrary.getCachedLikedSongs();
+      final cachedPlaylists = await _offlineLibrary.getCachedPlaylists();
+
+      if (mounted) {
+        setState(() {
+          _likedSongs = cachedLikedSongs;
+          _playlists = cachedPlaylists;
+        });
+      }
+
+      final isOnline = await _networkStatus.isOnline();
+      if (!isOnline) {
+        if (mounted) {
+          setState(() {
+            _isOfflineMode = true;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      List<Song> likedSongs = cachedLikedSongs;
+      List<Map<String, dynamic>> playlists = cachedPlaylists;
 
       try {
         likedSongs = await _musicService.getLikedSongs();
+        await _offlineLibrary.cacheLikedSongs(likedSongs);
       } catch (_) {}
 
       try {
         playlists = await _musicService.getMyPlaylists();
+        await _offlineLibrary.cachePlaylists(playlists);
       } catch (_) {}
 
       if (mounted) {
         setState(() {
           _likedSongs = likedSongs;
           _playlists = playlists;
+          _isOfflineMode = false;
           _isLoading = false;
         });
       }
     } else {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isOfflineMode = false;
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -116,6 +148,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _createPlaylist(String name) async {
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('You are offline. Reconnect to create playlists.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
     try {
       final result = await _musicService.createPlaylist(name);
       if (!mounted) return;
@@ -124,6 +168,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         setState(() {
           _playlists.insert(0, Map<String, dynamic>.from(result['data']));
         });
+        await _offlineLibrary.cachePlaylists(_playlists);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -147,7 +192,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   int _playlistSongCount(Map<String, dynamic> playlist) {
     final songs = playlist['songs'];
-    return songs is List ? songs.length : 0;
+    if (songs is List) {
+      return songs.length;
+    }
+
+    final songCount = playlist['song_count'] ?? playlist['songCount'];
+    if (songCount is int) {
+      return songCount;
+    }
+    return int.tryParse(songCount?.toString() ?? '') ?? 0;
   }
 
   Future<void> _downloadPlaylistAudio(Map<String, dynamic> playlist) async {
@@ -164,7 +217,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     });
 
     try {
-      final details = await _musicService.getPlaylist(playlistId);
+      Map<String, dynamic>? details;
+      final isOnline = await _networkStatus.isOnline();
+      if (isOnline) {
+        details = await _musicService.getPlaylist(playlistId);
+      }
+      details ??= await _offlineLibrary.getCachedPlaylist(playlistId);
+
       if (!mounted) {
         return;
       }
@@ -272,6 +331,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
               ],
             ),
+            if (_isOfflineMode)
+              Container(
+                margin: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2112),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF8A6A35)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.wifi_off_rounded, color: Color(0xFFF6C977), size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Offline mode: showing cached library content.',
+                        style: TextStyle(color: Color(0xFFF6C977), fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 20),
             if (_isLoading)
               const Expanded(

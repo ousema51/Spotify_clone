@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../models/artist.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/network_status_service.dart';
+import '../services/offline_library_service.dart';
 import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
 
 class HomeScreen extends StatefulWidget {
   final void Function(Song, [List<Song>?]) onSongSelected;
+  final ValueChanged<String> onArtistSelected;
 
-  const HomeScreen({super.key, required this.onSongSelected});
+  const HomeScreen({
+    super.key,
+    required this.onSongSelected,
+    required this.onArtistSelected,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -17,9 +25,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final MusicService _musicService = MusicService();
   final UserActivityService _activityService = UserActivityService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   List<Song> _trending = [];
   List<Song> _suggestions = [];
   List<Map<String, dynamic>> _recentPlaylists = [];
+  List<Artist> _recentArtists = [];
   bool _isLoading = true;
 
   @override
@@ -30,31 +41,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
+    final recentPlaylists = await _activityService.getRecentPlaylists();
+    final recentArtists = await _offlineLibrary.getRecentArtistPages(limit: 10);
+
+    if (mounted) {
+      setState(() {
+        _recentPlaylists = recentPlaylists;
+        _recentArtists = recentArtists;
+      });
+    }
+
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
     try {
       final trending = await _musicService.getTrending();
       List<Song> suggestions = [];
       try {
         suggestions = await _musicService.getSuggestions();
       } catch (_) {}
-      final recentPlaylists = await _activityService.getRecentPlaylists();
 
       if (mounted) {
         setState(() {
           _trending = trending;
           _suggestions = suggestions;
-          _recentPlaylists = recentPlaylists;
           _isLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load data: $e'),
-            backgroundColor: Colors.red[700],
-          ),
-        );
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
@@ -167,6 +192,77 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 22),
+                  ],
+
+                  if (_recentArtists.isNotEmpty) ...[
+                    const Text(
+                      'Recently Visited Artists',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 98,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _recentArtists.length,
+                        itemBuilder: (context, index) {
+                          final artist = _recentArtists[index];
+                          return GestureDetector(
+                            onTap: () => widget.onArtistSelected(artist.id),
+                            child: Container(
+                              width: 88,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: Column(
+                                children: [
+                                  ClipOval(
+                                    child: SizedBox(
+                                      width: 62,
+                                      height: 62,
+                                      child: (artist.imageUrl ?? '').trim().isNotEmpty
+                                          ? CachedNetworkImage(
+                                              imageUrl: artist.imageUrl!,
+                                              fit: BoxFit.cover,
+                                              errorWidget: (context, url, error) =>
+                                                  Container(
+                                                    color: const Color(0xFF282828),
+                                                    child: const Icon(
+                                                      Icons.person_rounded,
+                                                      color: Colors.white54,
+                                                    ),
+                                                  ),
+                                            )
+                                          : Container(
+                                              color: const Color(0xFF282828),
+                                              child: const Icon(
+                                                Icons.person_rounded,
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    artist.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 24),
                   ],
 
                   if (_trending.isNotEmpty) ...[

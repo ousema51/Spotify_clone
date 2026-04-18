@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'services/auth_service.dart';
+import 'services/offline_sync_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(OfflineSyncService().start());
   runApp(const MyApp());
 }
 

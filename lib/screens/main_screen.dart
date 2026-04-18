@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
+import '../services/network_status_service.dart';
 import '../services/offline_audio_cache_service.dart';
+import '../services/offline_library_service.dart';
 import '../services/player_service.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
@@ -37,6 +39,8 @@ class _MainScreenState extends State<MainScreen> {
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
   final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   int _playRequestNonce = 0;
   final List<Song> _playQueue = [];
   final List<Song> _playbackHistory = [];
@@ -47,6 +51,7 @@ class _MainScreenState extends State<MainScreen> {
   final Set<String> _favoriteSongIds = <String>{};
   bool _favoriteActionInFlight = false;
   bool _isCurrentSongFavorite = false;
+  PlayerPlaybackState _lastObservedPlaybackState = PlayerPlaybackState.idle;
   int _favoriteStatusRequestNonce = 0;
   int _prebufferGeneration = 0;
   Set<String> _prebufferAttemptedKeys = <String>{};
@@ -67,6 +72,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    _lastObservedPlaybackState = _player.playbackStateNotifier.value;
     _player.playbackStateNotifier.addListener(_handlePlaybackStateChange);
   }
 
@@ -90,11 +96,17 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _handlePlaybackStateChange() {
+    final nextState = _player.playbackStateNotifier.value;
+    final isFreshCompletion =
+        nextState == PlayerPlaybackState.completed &&
+        _lastObservedPlaybackState != PlayerPlaybackState.completed;
+    _lastObservedPlaybackState = nextState;
+
     if (!mounted) {
       return;
     }
 
-    if (_player.playbackStateNotifier.value == PlayerPlaybackState.completed) {
+    if (isFreshCompletion) {
       unawaited(_handleTrackCompleted());
     }
   }
@@ -135,6 +147,40 @@ class _MainScreenState extends State<MainScreen> {
       return -1;
     }
     return queue.indexWhere((candidate) => _sameSong(candidate, song));
+  }
+
+  int _indexInQueueByIdentity(List<Song> queue, Song? song) {
+    if (song == null) {
+      return -1;
+    }
+    return queue.indexWhere((candidate) => identical(candidate, song));
+  }
+
+  int _findQueueIndexForSong(List<Song> queue, Song song) {
+    final identityIndex = _indexInQueueByIdentity(queue, song);
+    if (identityIndex >= 0) {
+      return identityIndex;
+    }
+    return _indexInQueue(queue, song);
+  }
+
+  int _resolveCurrentQueueIndex(List<Song> queue, Song? currentSong) {
+    if (currentSong == null || queue.isEmpty) {
+      return -1;
+    }
+
+    if (_queueIndex >= 0 && _queueIndex < queue.length) {
+      if (identical(queue[_queueIndex], currentSong)) {
+        return _queueIndex;
+      }
+    }
+
+    final identityIndex = _indexInQueueByIdentity(queue, currentSong);
+    if (identityIndex >= 0) {
+      return identityIndex;
+    }
+
+    return _indexInQueue(queue, currentSong);
   }
 
   void _rememberForPrevious(Song? current, Song nextSong) {
@@ -193,7 +239,7 @@ class _MainScreenState extends State<MainScreen> {
       return const <Song>[];
     }
 
-    final currentIndex = _indexInQueue(queue, current);
+    final currentIndex = _resolveCurrentQueueIndex(queue, current);
     if (currentIndex < 0) {
       return List<Song>.from(queue);
     }
@@ -326,6 +372,16 @@ class _MainScreenState extends State<MainScreen> {
     _markFullPlayerUiDirty();
 
     try {
+      final isOnline = await _networkStatus.isOnline();
+      if (!isOnline) {
+        await _queueFavoriteActionForSync(
+          song: song,
+          isFavorite: nextIsFavorite,
+        );
+        _showPlaybackInfo('Offline mode: favorite change queued for sync');
+        return;
+      }
+
       final response = nextIsFavorite
           ? await _musicService.likeSong(songId, song.toMetadata())
           : await _musicService.unlikeSong(songId);
@@ -334,6 +390,17 @@ class _MainScreenState extends State<MainScreen> {
       }
 
       if (response['success'] != true) {
+        final message =
+            response['message']?.toString() ?? 'Failed to update favorites';
+        if (_looksLikeConnectivityError(message)) {
+          await _queueFavoriteActionForSync(
+            song: song,
+            isFavorite: nextIsFavorite,
+          );
+          _showPlaybackInfo('Offline mode: favorite change queued for sync');
+          return;
+        }
+
         setState(() {
           _isCurrentSongFavorite = !nextIsFavorite;
           if (_isCurrentSongFavorite) {
@@ -344,9 +411,10 @@ class _MainScreenState extends State<MainScreen> {
         });
         _markFullPlayerUiDirty();
 
-        final message =
-            response['message']?.toString() ?? 'Failed to update favorites';
         _showPlaybackError(message);
+      } else {
+        await _applyFavoriteLocally(song: song, isFavorite: nextIsFavorite);
+        await _offlineLibrary.removePendingLikeAction(songId);
       }
     } catch (e) {
       if (mounted) {
@@ -398,9 +466,7 @@ class _MainScreenState extends State<MainScreen> {
         ..clear()
         ..addAll(queue);
 
-      final index = _playQueue.indexWhere(
-        (candidate) => _sameSong(candidate, song),
-      );
+      final index = _findQueueIndexForSong(_playQueue, song);
       if (index >= 0) {
         _queueIndex = index;
       } else {
@@ -416,9 +482,7 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    final existing = _playQueue.indexWhere(
-      (candidate) => _sameSong(candidate, song),
-    );
+    final existing = _findQueueIndexForSong(_playQueue, song);
     if (existing >= 0) {
       _queueIndex = existing;
       return;
@@ -525,6 +589,58 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  void _showPlaybackInfo(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.orange[700]),
+    );
+  }
+
+  bool _looksLikeConnectivityError(String? message) {
+    final text = (message ?? '').toLowerCase();
+    return text.contains('socket') ||
+        text.contains('network') ||
+        text.contains('timed out') ||
+        text.contains('failed host lookup') ||
+        text.contains('connection');
+  }
+
+  Future<void> _applyFavoriteLocally({
+    required Song song,
+    required bool isFavorite,
+  }) async {
+    final songId = song.id.trim();
+    if (songId.isEmpty) {
+      return;
+    }
+
+    if (isFavorite) {
+      await _offlineLibrary.applyLikedSongLocally(song);
+    } else {
+      await _offlineLibrary.removeLikedSongLocally(songId);
+    }
+  }
+
+  Future<void> _queueFavoriteActionForSync({
+    required Song song,
+    required bool isFavorite,
+  }) async {
+    final songId = song.id.trim();
+    if (songId.isEmpty) {
+      return;
+    }
+
+    await _applyFavoriteLocally(song: song, isFavorite: isFavorite);
+    await _offlineLibrary.queueLikeAction(
+      songId: songId,
+      like: isFavorite,
+      metadata: isFavorite ? song.toMetadata() : null,
+    );
+  }
+
   bool get _hasPreviousSong {
     if (_playbackHistory.isNotEmpty) {
       return true;
@@ -536,7 +652,7 @@ class _MainScreenState extends State<MainScreen> {
       return false;
     }
 
-    final index = _indexInQueue(queue, current);
+    final index = _resolveCurrentQueueIndex(queue, current);
     return index > 0;
   }
 
@@ -555,7 +671,7 @@ class _MainScreenState extends State<MainScreen> {
       return queue.isNotEmpty;
     }
 
-    final index = _indexInQueue(queue, current);
+    final index = _resolveCurrentQueueIndex(queue, current);
     if (index < 0) {
       return queue.length > 1;
     }
@@ -603,13 +719,13 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    final currentIndex = _indexInQueue(queue, current);
+    final currentIndex = _resolveCurrentQueueIndex(queue, current);
     int nextIndex = -1;
 
     if (_isShuffleEnabled && queue.length > 1) {
       final candidates = <int>[];
       for (var i = 0; i < queue.length; i++) {
-        if (i != currentIndex) {
+        if (currentIndex < 0 || i != currentIndex) {
           candidates.add(i);
         }
       }
@@ -635,8 +751,7 @@ class _MainScreenState extends State<MainScreen> {
     final nextSong = queue[nextIndex];
     setState(() {
       _rememberForPrevious(current, nextSong);
-      final playQueueIndex = _indexInQueue(_playQueue, nextSong);
-      _queueIndex = playQueueIndex >= 0 ? playQueueIndex : nextIndex;
+      _queueIndex = nextIndex;
       _setCurrentSong(nextSong);
     });
 
@@ -648,7 +763,7 @@ class _MainScreenState extends State<MainScreen> {
     if (_playbackHistory.isNotEmpty) {
       final previousSong = _playbackHistory.removeLast();
       setState(() {
-        final playQueueIndex = _indexInQueue(_playQueue, previousSong);
+        final playQueueIndex = _findQueueIndexForSong(_playQueue, previousSong);
         if (playQueueIndex >= 0) {
           _queueIndex = playQueueIndex;
         }
@@ -666,12 +781,11 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    final currentIndex = _indexInQueue(queue, current);
+    final currentIndex = _resolveCurrentQueueIndex(queue, current);
     if (currentIndex > 0) {
       final previousSong = queue[currentIndex - 1];
       setState(() {
-        final playQueueIndex = _indexInQueue(_playQueue, previousSong);
-        _queueIndex = playQueueIndex >= 0 ? playQueueIndex : currentIndex - 1;
+        _queueIndex = currentIndex - 1;
         _setCurrentSong(previousSong);
       });
       await _resolveAndPlaySong(previousSong);
@@ -680,6 +794,172 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     _showPlaybackError('No previous song available in queue');
+  }
+
+  List<Song> _buildUpNextSongs() {
+    final queue = _effectiveQueue();
+    final current = _currentSong;
+    if (queue.isEmpty || current == null) {
+      return const <Song>[];
+    }
+
+    final currentIndex = _resolveCurrentQueueIndex(queue, current);
+    if (currentIndex < 0) {
+      return List<Song>.from(queue);
+    }
+
+    final upNext = <Song>[];
+    if (_isShuffleEnabled) {
+      for (var i = 0; i < queue.length; i++) {
+        if (i != currentIndex) {
+          upNext.add(queue[i]);
+        }
+      }
+      return upNext;
+    }
+
+    for (var i = currentIndex + 1; i < queue.length; i++) {
+      upNext.add(queue[i]);
+    }
+
+    if (_repeatMode == QueueRepeatMode.playlist && queue.length > 1) {
+      for (var i = 0; i < currentIndex; i++) {
+        upNext.add(queue[i]);
+      }
+    }
+
+    return upNext;
+  }
+
+  Song? _peekNextSong() {
+    final upNext = _buildUpNextSongs();
+    if (upNext.isEmpty) {
+      return null;
+    }
+    return upNext.first;
+  }
+
+  void _showUpNextSheet(BuildContext pageContext) {
+    final upNext = _buildUpNextSongs();
+    showModalBottomSheet<void>(
+      context: pageContext,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        if (upNext.isEmpty) {
+          return const SafeArea(
+            child: SizedBox(
+              height: 140,
+              child: Center(
+                child: Text(
+                  'No upcoming song in queue',
+                  style: TextStyle(color: Colors.white70, fontSize: 15),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: SizedBox(
+            height: 420,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Up Next',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${upNext.length}',
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: upNext.length,
+                    separatorBuilder: (context, index) => Divider(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.04),
+                    ),
+                    itemBuilder: (context, index) {
+                      final nextSong = upNext[index];
+                      final isNextImmediate = index == 0;
+
+                      return ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 2,
+                        ),
+                        leading: isNextImmediate
+                            ? const Icon(
+                                Icons.play_arrow_rounded,
+                                color: Color(0xFF9EC2FF),
+                              )
+                            : Text(
+                                '${index + 1}',
+                                style: TextStyle(
+                                  color: Colors.grey[400],
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                        title: Text(
+                          nextSong.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          (nextSong.artist ?? 'Unknown Artist').trim().isEmpty
+                              ? 'Unknown Artist'
+                              : nextSong.artist!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 12,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          _onSongSelected(nextSong, _effectiveQueue());
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   String _formatDurationLabel(Duration duration) {
@@ -914,6 +1194,8 @@ class _MainScreenState extends State<MainScreen> {
                       ? Icons.repeat_one_rounded
                       : Icons.repeat_rounded;
                   final repeatActive = _repeatMode != QueueRepeatMode.off;
+                  final upNextSong = _peekNextSong();
+                  final hasUpcoming = upNextSong != null;
                   final rawArtistName = (song.artist ?? '').trim();
                   final artistLabel = rawArtistName.isEmpty
                     ? 'Unknown Artist'
@@ -1041,6 +1323,39 @@ class _MainScreenState extends State<MainScreen> {
                                                 alpha: 0.68,
                                               ),
                                               fontSize: 13,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          TextButton.icon(
+                                            onPressed: hasUpcoming
+                                                ? () =>
+                                                      _showUpNextSheet(pageContext)
+                                                : null,
+                                            style: TextButton.styleFrom(
+                                              alignment: Alignment.centerLeft,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 8,
+                                                  ),
+                                              foregroundColor: Colors.white,
+                                              backgroundColor: Colors.white
+                                                  .withValues(alpha: 0.08),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(18),
+                                              ),
+                                            ),
+                                            icon: const Icon(
+                                              Icons.queue_music_rounded,
+                                              size: 18,
+                                            ),
+                                            label: Text(
+                                              hasUpcoming
+                                                  ? 'Up Next: ${upNextSong.title}'
+                                                  : 'No upcoming song',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
                                         ],
@@ -1546,7 +1861,10 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     final pages = [
-      HomeScreen(onSongSelected: _onSongSelected),
+      HomeScreen(
+        onSongSelected: _onSongSelected,
+        onArtistSelected: _openArtist,
+      ),
       SearchScreen(
         onSongSelected: _onSongSelected,
         onArtistSelected: _openArtist,

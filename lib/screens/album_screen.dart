@@ -3,6 +3,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/album.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/network_status_service.dart';
+import '../services/offline_library_service.dart';
 import '../widgets/song_tile.dart';
 
 class AlbumScreen extends StatefulWidget {
@@ -21,8 +23,11 @@ class AlbumScreen extends StatefulWidget {
 
 class _AlbumScreenState extends State<AlbumScreen> {
   final MusicService _musicService = MusicService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   Album? _album;
   bool _isLoading = true;
+  bool _isOfflineMode = false;
 
   @override
   void initState() {
@@ -32,23 +37,55 @@ class _AlbumScreenState extends State<AlbumScreen> {
 
   Future<void> _loadAlbum() async {
     setState(() => _isLoading = true);
+    final cachedAlbum = await _offlineLibrary.getCachedAlbumPage(widget.albumId);
+
+    if (cachedAlbum != null && mounted) {
+      setState(() {
+        _album = cachedAlbum;
+      });
+      await _offlineLibrary.markAlbumVisited(widget.albumId);
+    }
+
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isOfflineMode = true;
+        _isLoading = false;
+      });
+      return;
+    }
+
     try {
       final album = await _musicService.getAlbum(widget.albumId);
+      if (album != null) {
+        await _offlineLibrary.cacheAlbumPage(album);
+      }
       if (mounted) {
         setState(() {
-          _album = album;
+          _album = album ?? cachedAlbum;
+          _isOfflineMode = false;
           _isLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load album: $e'),
-            backgroundColor: Colors.red[700],
-          ),
-        );
+        setState(() {
+          _album = cachedAlbum;
+          _isOfflineMode = cachedAlbum != null;
+          _isLoading = false;
+        });
+        if (cachedAlbum == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to load album: $e'),
+              backgroundColor: Colors.red[700],
+            ),
+          );
+        }
       }
     }
   }
@@ -134,6 +171,40 @@ class _AlbumScreenState extends State<AlbumScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (_isOfflineMode)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2A2112),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFF8A6A35),
+                                  ),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(
+                                      Icons.wifi_off_rounded,
+                                      color: Color(0xFFF6C977),
+                                      size: 18,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Offline mode: showing cached album page.',
+                                        style: TextStyle(
+                                          color: Color(0xFFF6C977),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             Text(
                               _album!.title,
                               style: const TextStyle(

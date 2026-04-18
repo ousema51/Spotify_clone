@@ -4,6 +4,8 @@ import '../models/song.dart';
 import '../models/album.dart';
 import '../models/artist.dart';
 import '../services/music_service.dart';
+import '../services/network_status_service.dart';
+import '../services/offline_library_service.dart';
 import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
 
@@ -27,6 +29,8 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final MusicService _musicService = MusicService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   final UserActivityService _activityService = UserActivityService();
   Timer? _debounce;
 
@@ -69,6 +73,24 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _loadSongActionState() async {
+    final cachedLikedSongs = await _offlineLibrary.getCachedLikedSongs();
+    final cachedPlaylists = await _offlineLibrary.getCachedPlaylists();
+
+    if (mounted) {
+      setState(() {
+        _playlists = cachedPlaylists;
+        _likedSongIds = cachedLikedSongs
+            .map((song) => song.id.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      });
+    }
+
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      return;
+    }
+
     try {
       final likedSongsFuture = _musicService.getLikedSongs();
       final playlistsFuture = _musicService.getMyPlaylists();
@@ -84,6 +106,9 @@ class _SearchScreenState extends State<SearchScreen> {
             .where((id) => id.isNotEmpty)
             .toSet();
       });
+
+      await _offlineLibrary.cacheLikedSongs(likedSongs);
+      await _offlineLibrary.cachePlaylists(playlists);
     } catch (_) {}
   }
 
@@ -94,17 +119,28 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<void> _showChoosePlaylistForSong(Song song) async {
     List<Map<String, dynamic>> playlists = _playlists;
-    try {
-      final freshPlaylists = await _musicService.getMyPlaylists();
-      if (freshPlaylists.isNotEmpty || playlists.isEmpty) {
-        playlists = freshPlaylists;
-      }
+    final isOnline = await _networkStatus.isOnline();
+    if (isOnline) {
+      try {
+        final freshPlaylists = await _musicService.getMyPlaylists();
+        if (freshPlaylists.isNotEmpty || playlists.isEmpty) {
+          playlists = freshPlaylists;
+        }
+        if (mounted) {
+          setState(() {
+            _playlists = freshPlaylists;
+          });
+        }
+        await _offlineLibrary.cachePlaylists(freshPlaylists);
+      } catch (_) {}
+    } else {
+      playlists = await _offlineLibrary.getCachedPlaylists();
       if (mounted) {
         setState(() {
-          _playlists = freshPlaylists;
+          _playlists = playlists;
         });
       }
-    } catch (_) {}
+    }
 
     if (!mounted) return;
 
@@ -149,6 +185,21 @@ class _SearchScreenState extends State<SearchScreen> {
                 onTap: () async {
                   final navigator = Navigator.of(parentContext);
                   final messenger = ScaffoldMessenger.of(parentContext);
+
+                  final hasNetwork = await _networkStatus.isOnline();
+                  if (!hasNetwork) {
+                    if (!mounted) return;
+                    navigator.pop();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: const Text(
+                          'Reconnect to add songs to playlists.',
+                        ),
+                        backgroundColor: Colors.orange[700],
+                      ),
+                    );
+                    return;
+                  }
 
                   final result = await _musicService.addSongToPlaylist(
                     playlistId,
@@ -209,10 +260,33 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      await _offlineLibrary.applyLikedSongLocally(song);
+      await _offlineLibrary.queueLikeAction(
+        songId: songId,
+        like: true,
+        metadata: song.toMetadata(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _likedSongIds.add(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Saved locally. Will sync when online.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
     final result = await _musicService.likeSong(songId, song.toMetadata());
     if (!mounted) return;
 
     if (result['success'] == true) {
+      await _offlineLibrary.applyLikedSongLocally(song);
+      if (!mounted) return;
       setState(() {
         _likedSongIds.add(songId);
       });
@@ -241,6 +315,26 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
+    if (_looksLikeConnectivityError(message)) {
+      await _offlineLibrary.applyLikedSongLocally(song);
+      await _offlineLibrary.queueLikeAction(
+        songId: songId,
+        like: true,
+        metadata: song.toMetadata(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _likedSongIds.add(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Offline now. Like queued for sync.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -255,10 +349,29 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
+      await _offlineLibrary.removeLikedSongLocally(songId);
+      await _offlineLibrary.queueLikeAction(songId: songId, like: false);
+      if (!mounted) return;
+      setState(() {
+        _likedSongIds.remove(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Removed locally. Will sync when online.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+
     final result = await _musicService.unlikeSong(songId);
     if (!mounted) return;
 
     if (result['success'] == true) {
+      await _offlineLibrary.removeLikedSongLocally(songId);
+      if (!mounted) return;
       setState(() {
         _likedSongIds.remove(songId);
       });
@@ -266,6 +379,23 @@ class _SearchScreenState extends State<SearchScreen> {
         SnackBar(
           content: const Text('Removed from liked songs'),
           backgroundColor: Colors.green[700],
+        ),
+      );
+      return;
+    }
+
+    final message = result['message']?.toString();
+    if (_looksLikeConnectivityError(message)) {
+      await _offlineLibrary.removeLikedSongLocally(songId);
+      await _offlineLibrary.queueLikeAction(songId: songId, like: false);
+      if (!mounted) return;
+      setState(() {
+        _likedSongIds.remove(songId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Offline now. Remove queued for sync.'),
+          backgroundColor: Colors.orange[700],
         ),
       );
       return;
@@ -279,6 +409,15 @@ class _SearchScreenState extends State<SearchScreen> {
         backgroundColor: Colors.red[700],
       ),
     );
+  }
+
+  bool _looksLikeConnectivityError(String? message) {
+    final text = (message ?? '').toLowerCase();
+    return text.contains('socket') ||
+        text.contains('network') ||
+        text.contains('timed out') ||
+        text.contains('failed host lookup') ||
+        text.contains('connection');
   }
 
   Future<void> _removeSongFromRecentSelections(Song song) async {

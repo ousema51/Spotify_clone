@@ -3,6 +3,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/network_status_service.dart';
+import '../services/offline_library_service.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/album_card.dart';
 
@@ -24,8 +26,11 @@ class ArtistScreen extends StatefulWidget {
 
 class _ArtistScreenState extends State<ArtistScreen> {
   final MusicService _musicService = MusicService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final NetworkStatusService _networkStatus = NetworkStatusService();
   Artist? _artist;
   bool _isLoading = true;
+  bool _isOfflineMode = false;
 
   @override
   void initState() {
@@ -35,23 +40,53 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Future<void> _loadArtist() async {
     setState(() => _isLoading = true);
-    try {
-      final artist = await _musicService.getArtist(widget.artistId);
+    final cachedArtist = await _offlineLibrary.getCachedArtistPage(widget.artistId);
+
+    if (cachedArtist != null && mounted) {
+      setState(() {
+        _artist = cachedArtist;
+      });
+      await _offlineLibrary.markArtistVisited(widget.artistId);
+    }
+
+    final isOnline = await _networkStatus.isOnline();
+    if (!isOnline) {
       if (mounted) {
         setState(() {
-          _artist = artist;
+          _isOfflineMode = true;
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    try {
+      final artist = await _musicService.getArtist(widget.artistId);
+      if (artist != null) {
+        await _offlineLibrary.cacheArtistPage(artist, markVisited: true);
+      }
+      if (mounted) {
+        setState(() {
+          _artist = artist ?? cachedArtist;
+          _isOfflineMode = false;
           _isLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load artist: $e'),
-            backgroundColor: Colors.red[700],
-          ),
-        );
+        setState(() {
+          _artist = cachedArtist;
+          _isOfflineMode = cachedArtist != null;
+          _isLoading = false;
+        });
+        if (cachedArtist == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to load artist: $e'),
+              backgroundColor: Colors.red[700],
+            ),
+          );
+        }
       }
     }
   }
@@ -161,6 +196,40 @@ class _ArtistScreenState extends State<ArtistScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (_isOfflineMode)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2A2112),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFF8A6A35),
+                                  ),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(
+                                      Icons.wifi_off_rounded,
+                                      color: Color(0xFFF6C977),
+                                      size: 18,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Offline mode: showing cached artist page.',
+                                        style: TextStyle(
+                                          color: Color(0xFFF6C977),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             if (_artist!.followerCount != null) ...[
                               Text(
                                 _formatFollowers(_artist!.followerCount),
