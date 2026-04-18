@@ -10,13 +10,32 @@ import 'screens/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MyApp());
+  unawaited(_bootstrapServices());
+}
+
+Future<void> _bootstrapServices() async {
   if (!kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS)) {
-    await PlayerNotificationService().initialize();
+    try {
+      await PlayerNotificationService().initialize();
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('Player notification init failed: $e');
+        debugPrintStack(stackTrace: st);
+      }
+    }
   }
-  unawaited(OfflineSyncService().start());
-  runApp(const MyApp());
+
+  try {
+    await OfflineSyncService().start();
+  } catch (e, st) {
+    if (kDebugMode) {
+      debugPrint('Offline sync startup failed: $e');
+      debugPrintStack(stackTrace: st);
+    }
+  }
 }
 
 class MyApp extends StatelessWidget {
