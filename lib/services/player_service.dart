@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../models/song.dart';
+import 'player_notification_service.dart';
 
 enum PlayerPlaybackState { idle, loading, playing, paused, completed, error }
 
@@ -26,28 +27,69 @@ class PlayerService {
   StreamSubscription<Duration?>? _durationSubscription;
   StreamSubscription<Duration>? _bufferedPositionSubscription;
   Song? _currentSong;
+  final PlayerNotificationService _notification = PlayerNotificationService();
+  Future<void> Function()? _onSkipToNextRequested;
+  Future<void> Function()? _onSkipToPreviousRequested;
+  bool _canSkipNext = false;
+  bool _canSkipPrevious = false;
+  int _lastNotifiedPositionSecond = -1;
 
   PlayerService._internal() {
     _stateSubscription = _audioPlayer.playerStateStream.listen(
       _onPlayerStateChanged,
       onError: (error, stackTrace) {
         playbackStateNotifier.value = PlayerPlaybackState.error;
+        _pushNotificationState();
       },
     );
 
     _positionSubscription = _audioPlayer.positionStream.listen((position) {
       positionNotifier.value = position;
+      final second = position.inSeconds;
+      if (second != _lastNotifiedPositionSecond) {
+        _lastNotifiedPositionSecond = second;
+        _pushNotificationState();
+      }
     });
 
     _durationSubscription = _audioPlayer.durationStream.listen((duration) {
       durationNotifier.value = duration ?? Duration.zero;
+      _pushNotificationState();
     });
 
     _bufferedPositionSubscription = _audioPlayer.bufferedPositionStream.listen((
       buffered,
     ) {
       bufferedPositionNotifier.value = buffered;
+      _pushNotificationState();
     });
+
+    _notification.bindControlCallbacks(
+      onPlayRequested: () async {
+        await play();
+      },
+      onPauseRequested: () async {
+        await pause();
+      },
+      onStopRequested: () async {
+        await stop();
+      },
+      onSkipToNextRequested: () async {
+        final callback = _onSkipToNextRequested;
+        if (callback != null) {
+          await callback();
+        }
+      },
+      onSkipToPreviousRequested: () async {
+        final callback = _onSkipToPreviousRequested;
+        if (callback != null) {
+          await callback();
+        }
+      },
+      onSeekRequested: (position) async {
+        await seek(position);
+      },
+    );
   }
 
   Song? get currentSong => _currentSong;
@@ -55,6 +97,23 @@ class PlayerService {
   bool get hasSource => _audioPlayer.audioSource != null;
 
   bool get isPlaying => _audioPlayer.playing;
+
+  void setSkipHandlers({
+    Future<void> Function()? onSkipToNextRequested,
+    Future<void> Function()? onSkipToPreviousRequested,
+  }) {
+    _onSkipToNextRequested = onSkipToNextRequested;
+    _onSkipToPreviousRequested = onSkipToPreviousRequested;
+  }
+
+  void setTransportAvailability({
+    required bool canSkipNext,
+    required bool canSkipPrevious,
+  }) {
+    _canSkipNext = canSkipNext;
+    _canSkipPrevious = canSkipPrevious;
+    _pushNotificationState();
+  }
 
   void _onPlayerStateChanged(PlayerState state) {
     switch (state.processingState) {
@@ -74,6 +133,8 @@ class PlayerService {
         playbackStateNotifier.value = PlayerPlaybackState.completed;
         break;
     }
+
+    _pushNotificationState();
   }
 
   Map<String, String>? _normalizeHeaders(Map<String, dynamic>? rawHeaders) {
@@ -107,6 +168,8 @@ class PlayerService {
     playbackStateNotifier.value = PlayerPlaybackState.loading;
     positionNotifier.value = Duration.zero;
     bufferedPositionNotifier.value = Duration.zero;
+    _lastNotifiedPositionSecond = -1;
+    _pushNotificationState();
 
     final source = AudioSource.uri(
       Uri.parse(trimmedUrl),
@@ -116,6 +179,7 @@ class PlayerService {
     await _audioPlayer.stop();
     await _audioPlayer.setAudioSource(source);
     await _audioPlayer.play();
+    _pushNotificationState();
   }
 
   Future<void> playLocalFile({
@@ -136,10 +200,13 @@ class PlayerService {
     playbackStateNotifier.value = PlayerPlaybackState.loading;
     positionNotifier.value = Duration.zero;
     bufferedPositionNotifier.value = Duration.zero;
+    _lastNotifiedPositionSecond = -1;
+    _pushNotificationState();
 
     await _audioPlayer.stop();
     await _audioPlayer.setFilePath(trimmedPath);
     await _audioPlayer.play();
+    _pushNotificationState();
   }
 
   Future<void> play() async {
@@ -147,10 +214,12 @@ class PlayerService {
       return;
     }
     await _audioPlayer.play();
+    _pushNotificationState();
   }
 
   Future<void> pause() async {
     await _audioPlayer.pause();
+    _pushNotificationState();
   }
 
   Future<void> seek(Duration position) async {
@@ -159,6 +228,7 @@ class PlayerService {
     }
 
     await _audioPlayer.seek(position);
+    _pushNotificationState();
   }
 
   Future<void> stop() async {
@@ -168,6 +238,36 @@ class PlayerService {
     bufferedPositionNotifier.value = Duration.zero;
     durationNotifier.value = Duration.zero;
     playbackStateNotifier.value = PlayerPlaybackState.idle;
+    _canSkipNext = false;
+    _canSkipPrevious = false;
+    _lastNotifiedPositionSecond = -1;
+    await _notification.clearNowPlaying();
+  }
+
+  void _pushNotificationState() {
+    final song = _currentSong;
+    if (song == null) {
+      return;
+    }
+
+    final state = playbackStateNotifier.value;
+    unawaited(
+      _notification.updateNowPlaying(
+        song: song,
+        isPlaying: state == PlayerPlaybackState.playing,
+        isLoading: state == PlayerPlaybackState.loading,
+        isCompleted: state == PlayerPlaybackState.completed,
+        canSkipNext: _canSkipNext,
+        canSkipPrevious: _canSkipPrevious,
+        position: positionNotifier.value,
+        bufferedPosition: bufferedPositionNotifier.value,
+        duration: durationNotifier.value > Duration.zero
+            ? durationNotifier.value
+            : (song.duration != null && song.duration! > 0
+                  ? Duration(seconds: song.duration!)
+                  : null),
+      ),
+    );
   }
 
   Future<void> disposePlayer() async {

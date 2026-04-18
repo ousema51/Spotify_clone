@@ -67,13 +67,28 @@ class _MainScreenState extends State<MainScreen> {
 
   void _markFullPlayerUiDirty() {
     _fullPlayerUiRevision.value = _fullPlayerUiRevision.value + 1;
+    _syncTransportActionsForNotification();
+  }
+
+  void _syncTransportActionsForNotification() {
+    _player.setTransportAvailability(
+      canSkipNext: _hasNextSong,
+      canSkipPrevious: _hasPreviousSong,
+    );
   }
 
   @override
   void initState() {
     super.initState();
+    _player.setSkipHandlers(
+      onSkipToNextRequested: () => _playNextSong(
+        showErrorWhenUnavailable: false,
+      ),
+      onSkipToPreviousRequested: _playPreviousSong,
+    );
     _lastObservedPlaybackState = _player.playbackStateNotifier.value;
     _player.playbackStateNotifier.addListener(_handlePlaybackStateChange);
+    _syncTransportActionsForNotification();
   }
 
   void _setCurrentSong(Song? song) {
@@ -1709,6 +1724,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
 
+    _syncTransportActionsForNotification();
     _restartSequentialPrebuffering();
 
     return true;
@@ -1828,6 +1844,11 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _cancelSequentialPrebuffering();
+    _player.setSkipHandlers();
+    _player.setTransportAvailability(
+      canSkipNext: false,
+      canSkipPrevious: false,
+    );
     _player.playbackStateNotifier.removeListener(_handlePlaybackStateChange);
     _currentSongNotifier.dispose();
     _fullPlayerUiRevision.dispose();

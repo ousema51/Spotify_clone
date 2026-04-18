@@ -1,13 +1,20 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'services/auth_service.dart';
+import 'services/player_notification_service.dart';
 import 'services/offline_sync_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    await PlayerNotificationService().initialize();
+  }
   unawaited(OfflineSyncService().start());
   runApp(const MyApp());
 }

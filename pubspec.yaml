@@ -35,6 +35,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  audio_service: ^0.18.18
   shared_preferences: ^2.2.3
   connectivity_plus: ^6.1.4
   cached_network_image: ^3.3.1
